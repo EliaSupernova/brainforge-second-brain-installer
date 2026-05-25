@@ -15,7 +15,7 @@ export async function runMcpServer(brainDir?: string): Promise<void> {
     {
       query: z.string(),
       limit: z.number().int().min(1).max(20).optional(),
-      type: z.enum(["identity", "preference", "decision", "project", "goal", "person", "workflow"]).optional(),
+      type: z.enum(["identity", "preference", "decision", "project", "goal", "person", "workflow", "open_loop"]).optional(),
       status: z.enum(["pending", "approved", "rejected", "outdated"]).optional(),
       sourceBacked: z.boolean().optional(),
       embeddingModel: z.string().optional(),
@@ -27,6 +27,9 @@ export async function runMcpServer(brainDir?: string): Promise<void> {
         return textResult(memoryResults.map((result) => ({
           id: result.memory.id,
           score: result.score,
+          keywordScore: result.keywordScore,
+          entityScore: result.entityScore,
+          recencyScore: result.recencyScore,
           type: result.memory.type,
           status: result.memory.status,
           text: result.memory.text,
@@ -106,9 +109,11 @@ export async function runMcpServer(brainDir?: string): Promise<void> {
       approveAll: z.boolean().optional(),
       approve: z.array(z.string()).optional(),
       reject: z.array(z.string()).optional(),
-      outdate: z.array(z.string()).optional()
+      outdate: z.array(z.string()).optional(),
+      editId: z.string().optional(),
+      editText: z.string().optional()
     },
-    async ({ approveAll, approve, reject, outdate }) => textResult(await reviewDraftMemories({ brainDir, approveAll: Boolean(approveAll), approve, reject, outdate }))
+    async ({ approveAll, approve, reject, outdate, editId, editText }) => textResult(await reviewDraftMemories({ brainDir, approveAll: Boolean(approveAll), approve, reject, outdate, editId, editText }))
   );
 
   server.tool(

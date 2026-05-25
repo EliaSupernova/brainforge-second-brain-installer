@@ -15,7 +15,7 @@ This repository contains a working MVP skeleton:
 - Chunks and embeds content locally with a deterministic vector fallback.
 - Extracts typed draft memories into readable Markdown notes.
 - Writes a machine-readable `08-Indexes/memories.jsonl` memory index with source citations, memory types, entities, and review status.
-- Lets users review draft extracted memories and explicitly approve, reject, or mark them outdated.
+- Lets users review draft extracted memories and explicitly approve, edit, reject, or mark them outdated.
 - Exposes MCP tools for source-backed search, reading, saving, importing, review, and doctor checks.
 - Adds a multi-agent orchestration protocol with planner, researcher, architect, builder, tester, security reviewer, docs/release engineer, and critic roles.
 - Generates scoped role prompts inside the vault so long tasks can be split across specialized agents.
@@ -80,9 +80,9 @@ brainforge plugin install --yes
 ```bash
 brainforge setup [--brain-dir PATH] [--imports-dir PATH] [--configure] [--yes]
 brainforge import [--brain-dir PATH] [--imports-dir PATH] [--embedding-provider auto|ollama|hash]
-brainforge search "query" [--brain-dir PATH] [--limit 5] [--source-backed] [--type identity|preference|decision|project|goal|person|workflow] [--status pending|approved|rejected|outdated]
+brainforge search "query" [--brain-dir PATH] [--limit 5] [--source-backed] [--type identity|preference|decision|project|goal|person|workflow|open_loop] [--status pending|approved|rejected|outdated]
 brainforge doctor [--brain-dir PATH] [--strict] [--json]
-brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--outdate ID[,ID]] [--approve-all] [--json]
+brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--outdate ID[,ID]] [--edit ID --text TEXT] [--approve-all] [--json]
 brainforge protocol [--json]
 brainforge handoff --phase PHASE --from AGENT --to AGENT --summary TEXT [--brain-dir PATH]
 brainforge company start --objective TEXT [--title TEXT] [--brain-dir PATH] [--json]
@@ -145,14 +145,18 @@ BrainForge keeps two search surfaces:
 - source-backed memory search over `08-Indexes/memories.jsonl`
 
 Each memory record stores its type, review status, source chunk, source file,
-conversation title, role, excerpt, entities, and timestamps. This lets Claude
-Code and Codex answer from reviewed memory while still showing where the memory
-came from.
+conversation title, role, excerpt, entities, and timestamps. Default
+source-backed search returns approved memory only; use `--status pending`,
+`--status rejected`, or `--status outdated` when you explicitly want to inspect
+non-approved memory. This lets Claude Code and Codex answer from reviewed memory
+while still showing where the memory came from.
 
 Examples:
 
 ```bash
 brainforge search "backups before config edits" --source-backed --type preference --status approved
+brainforge search "follow up RBC" --source-backed --type open_loop --status pending
+brainforge review --edit abc123def456 --text "I prefer concise direct answers and verified backups before config edits."
 brainforge review --outdate abc123def456
 ```
 

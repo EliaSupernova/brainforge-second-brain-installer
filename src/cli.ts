@@ -42,6 +42,9 @@ async function main(): Promise<void> {
           await outputResult(memoryResults.map((result) => ({
             id: result.memory.id,
             score: result.score,
+            keywordScore: result.keywordScore,
+            entityScore: result.entityScore,
+            recencyScore: result.recencyScore,
             type: result.memory.type,
             status: result.memory.status,
             text: result.memory.text,
@@ -91,7 +94,9 @@ async function main(): Promise<void> {
           approveAll: Boolean(args.flags["approve-all"]),
           approve: listFlag(args, "approve"),
           reject: listFlag(args, "reject"),
-          outdate: listFlag(args, "outdate")
+          outdate: listFlag(args, "outdate"),
+          editId: stringFlag(args, "edit"),
+          editText: stringFlag(args, "text")
         }), Boolean(args.flags.json));
         break;
       case "protocol":
@@ -249,8 +254,8 @@ function embeddingProviderFlag(args: ParsedArgs): "auto" | "ollama" | "hash" | u
 function memoryTypeFlag(args: ParsedArgs): MemoryType | undefined {
   const value = stringFlag(args, "type");
   if (value === undefined) return undefined;
-  if (value === "identity" || value === "preference" || value === "decision" || value === "project" || value === "goal" || value === "person" || value === "workflow") return value;
-  throw new Error("--type must be one of: identity, preference, decision, project, goal, person, workflow");
+  if (value === "identity" || value === "preference" || value === "decision" || value === "project" || value === "goal" || value === "person" || value === "workflow" || value === "open_loop") return value;
+  throw new Error("--type must be one of: identity, preference, decision, project, goal, person, workflow, open_loop");
 }
 
 function memoryStatusFlag(args: ParsedArgs): MemoryReviewStatus | undefined {
@@ -285,9 +290,9 @@ function printHelp(): void {
 Commands:
   brainforge setup [--brain-dir PATH] [--imports-dir PATH] [--configure] [--yes] [--json]
   brainforge import [--brain-dir PATH] [--imports-dir PATH] [--embedding-provider auto|ollama|hash] [--embedding-model MODEL] [--ollama-url URL] [--json]
-  brainforge search "query" [--brain-dir PATH] [--limit 5] [--source-backed] [--type identity|preference|decision|project|goal|person|workflow] [--status pending|approved|rejected|outdated] [--embedding-model MODEL] [--ollama-url URL] [--json]
+  brainforge search "query" [--brain-dir PATH] [--limit 5] [--source-backed] [--type identity|preference|decision|project|goal|person|workflow|open_loop] [--status pending|approved|rejected|outdated] [--embedding-model MODEL] [--ollama-url URL] [--json]
   brainforge doctor [--brain-dir PATH] [--strict] [--json]
-  brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--outdate ID[,ID]] [--approve-all] [--json]
+  brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--outdate ID[,ID]] [--edit ID --text TEXT] [--approve-all] [--json]
   brainforge protocol [--json]
   brainforge handoff --phase PHASE --from AGENT --to AGENT --summary TEXT [--brain-dir PATH] [--evidence TEXT] [--next TEXT] [--questions TEXT]
   brainforge company start --objective TEXT [--title TEXT] [--brain-dir PATH] [--json]

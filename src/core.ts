@@ -55,6 +55,8 @@ export interface ReviewOptions {
   approve?: string[];
   reject?: string[];
   outdate?: string[];
+  editId?: string;
+  editText?: string;
 }
 
 export type EmbeddingProviderChoice = "auto" | "ollama" | "hash";
@@ -108,7 +110,7 @@ export interface SearchResult {
   chunk: ChunkRecord;
 }
 
-export type MemoryType = "identity" | "preference" | "decision" | "project" | "goal" | "person" | "workflow";
+export type MemoryType = "identity" | "preference" | "decision" | "project" | "goal" | "person" | "workflow" | "open_loop";
 
 export interface SourceRef {
   chunkId: string;
@@ -136,6 +138,7 @@ export interface MemorySearchResult {
   score: number;
   keywordScore: number;
   entityScore: number;
+  recencyScore: number;
   memory: MemoryRecord;
   matchedSourceRefs: SourceRef[];
   why: string[];
@@ -216,6 +219,8 @@ export interface DraftMemoryItem {
   entities?: string[];
   observedAt?: string;
   lastConfirmedAt?: string;
+  originalText?: string;
+  editedAt?: string;
 }
 
 export type MemoryReviewStatus = "pending" | "approved" | "rejected" | "outdated";
@@ -521,6 +526,7 @@ export async function importExports(options: ImportOptions = {}): Promise<Record
       join(paths.brainDir, "05-Goals", "Extracted Goals.md"),
       join(paths.brainDir, "02-People", "Extracted People.md"),
       join(paths.brainDir, "09-System", "Extracted Workflows.md"),
+      join(paths.brainDir, "07-Open Loops", "Extracted Open Loops.md"),
       paths.reviewQueuePath,
       paths.memoryIndexPath
     ]
@@ -841,6 +847,7 @@ function classifyMemoryTypes(text: string): MemoryType[] {
   if (/\b(decision|decided|we decided|i decided|going with|we will|we should)\b/.test(lowered)) types.push("decision");
   if (/\b(goal|trying to|i want to|we want to|north star|objective)\b/.test(lowered)) types.push("goal");
   if (/\b(workflow|process|steps|pipeline|handoff|automation|routine|when .* then|first .* then)\b/.test(lowered)) types.push("workflow");
+  if (/\b(open loop|todo|to do|follow up|follow-up|next step|blocked|blocker|waiting on|pending|unresolved|needs? to|should check|remind|deadline)\b/.test(lowered)) types.push("open_loop");
   if (extractEntities(text).length > 0) types.push("person");
   return unique(types, 8) as MemoryType[];
 }
@@ -915,7 +922,7 @@ export async function searchMemories(
   const memories = (await readJsonl<MemoryRecord>(paths.memoryIndexPath))
     .filter((memory) => !filters.type || memory.type === filters.type)
     .filter((memory) => !filters.status || memory.status === filters.status)
-    .filter((memory) => filters.status || memory.status !== "rejected" && memory.status !== "outdated");
+    .filter((memory) => filters.status || memory.status === "approved");
   const queryTokens = tokenize(query);
   const queryEntities = extractEntities(query);
   return memories
@@ -923,18 +930,27 @@ export async function searchMemories(
       const memoryTokens = extractKeywords(`${memory.text} ${memory.entities.join(" ")} ${memory.sourceRefs.map((source) => source.excerpt).join(" ")}`);
       const keywordScore = lexicalScore(queryTokens, memoryTokens);
       const entityScore = entityOverlapScore(queryEntities, memory.entities);
-      const score = Number(((keywordScore * 0.8) + (entityScore * 0.2)).toFixed(6));
+      const recencyScore = memoryRecencyScore(memory);
+      const score = Number(((keywordScore * 0.65) + (entityScore * 0.15) + (recencyScore * 0.2)).toFixed(6));
       const why = [
         keywordScore > 0 ? `keyword=${keywordScore}` : "",
         entityScore > 0 ? `entity=${entityScore}` : "",
+        `recency=${recencyScore}`,
         `status=${memory.status}`,
         `type=${memory.type}`
       ].filter(Boolean);
-      return { score, keywordScore, entityScore, memory, matchedSourceRefs: memory.sourceRefs.slice(0, 3), why };
+      return { score, keywordScore, entityScore, recencyScore, memory, matchedSourceRefs: memory.sourceRefs.slice(0, 3), why };
     })
-    .filter((item) => item.score > 0)
+    .filter((item) => item.keywordScore > 0 || item.entityScore > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+}
+
+function memoryRecencyScore(memory: MemoryRecord): number {
+  const timestamp = Date.parse(memory.lastConfirmedAt ?? memory.updatedAt ?? memory.observedAt ?? memory.createdAt);
+  if (!Number.isFinite(timestamp)) return 0;
+  const ageDays = Math.max(0, (Date.now() - timestamp) / 86_400_000);
+  return Number((1 / (1 + ageDays / 30)).toFixed(6));
 }
 
 async function embedQueryForIndex(query: string, manifest: IndexManifest | null, options: EmbeddingOptions): Promise<number[]> {
@@ -978,10 +994,11 @@ interface MemoryDrafts {
   goals: MemoryDraftCandidate[];
   people: MemoryDraftCandidate[];
   workflows: MemoryDraftCandidate[];
+  openLoops: MemoryDraftCandidate[];
 }
 
 function extractMemoryDrafts(chunks: ChunkRecord[]): MemoryDrafts {
-  const drafts: MemoryDrafts = { identity: [], preferences: [], projects: [], decisions: [], goals: [], people: [], workflows: [] };
+  const drafts: MemoryDrafts = { identity: [], preferences: [], projects: [], decisions: [], goals: [], people: [], workflows: [], openLoops: [] };
   for (const chunk of chunks) {
     for (const sentence of splitSentences(chunk.text)) {
     const lowered = sentence.toLowerCase();
@@ -992,6 +1009,7 @@ function extractMemoryDrafts(chunks: ChunkRecord[]): MemoryDrafts {
     if (/\b(decision|decided|we decided|i decided|going with|we will|we should)\b/.test(lowered)) drafts.decisions.push(memoryDraftCandidate("decision", sentence, sourceRef));
     if (/\b(goal|trying to|i want to|we want to|north star|objective)\b/.test(lowered)) drafts.goals.push(memoryDraftCandidate("goal", sentence, sourceRef));
     if (/\b(workflow|process|steps|pipeline|handoff|automation|routine|when .* then|first .* then)\b/.test(lowered)) drafts.workflows.push(memoryDraftCandidate("workflow", sentence, sourceRef));
+    if (/\b(open loop|todo|to do|follow up|follow-up|next step|blocked|blocker|waiting on|pending|unresolved|needs? to|should check|remind|deadline)\b/.test(lowered)) drafts.openLoops.push(memoryDraftCandidate("open_loop", sentence, sourceRef));
     for (const name of sentence.match(/\b[A-Z][a-z]{2,}\b/g) ?? []) {
       if (!["The", "This", "That", "What", "When", "Where", "Claude", "Codex", "ChatGPT"].includes(name)) drafts.people.push(memoryDraftCandidate("person", name, sourceRef));
     }
@@ -1004,7 +1022,8 @@ function extractMemoryDrafts(chunks: ChunkRecord[]): MemoryDrafts {
     decisions: uniqueDrafts(drafts.decisions, 80),
     goals: uniqueDrafts(drafts.goals, 80),
     people: uniqueDrafts(drafts.people, 120),
-    workflows: uniqueDrafts(drafts.workflows, 80)
+    workflows: uniqueDrafts(drafts.workflows, 80),
+    openLoops: uniqueDrafts(drafts.openLoops, 80)
   };
 }
 
@@ -1071,6 +1090,7 @@ async function writeExtractedMemories(brainDir: string, drafts: MemoryDrafts): P
   await writeGeneratedMemoryFile(join(brainDir, "05-Goals", "Extracted Goals.md"), memoryListMarkdown("Extracted Goals", drafts.goals.map((item) => item.text)));
   await writeGeneratedMemoryFile(join(brainDir, "02-People", "Extracted People.md"), memoryListMarkdown("Extracted People", drafts.people.map((item) => item.text)));
   await writeGeneratedMemoryFile(join(brainDir, "09-System", "Extracted Workflows.md"), memoryListMarkdown("Extracted Workflows", drafts.workflows.map((item) => item.text)));
+  await writeGeneratedMemoryFile(join(brainDir, "07-Open Loops", "Extracted Open Loops.md"), memoryListMarkdown("Extracted Open Loops", drafts.openLoops.map((item) => item.text)));
   await updateMemoryReviewQueue(brainDir, drafts);
 }
 
@@ -1097,11 +1117,23 @@ async function updateMemoryReviewQueue(brainDir: string, drafts: MemoryDrafts): 
     ...drafts.decisions.map((item) => queueItemDraft("decisions", join(brainDir, "03-Decisions", "Extracted Decisions.md"), item, now)),
     ...drafts.goals.map((item) => queueItemDraft("goals", join(brainDir, "05-Goals", "Extracted Goals.md"), item, now)),
     ...drafts.people.map((item) => queueItemDraft("people", join(brainDir, "02-People", "Extracted People.md"), item, now)),
-    ...drafts.workflows.map((item) => queueItemDraft("workflows", join(brainDir, "09-System", "Extracted Workflows.md"), item, now))
+    ...drafts.workflows.map((item) => queueItemDraft("workflows", join(brainDir, "09-System", "Extracted Workflows.md"), item, now)),
+    ...drafts.openLoops.map((item) => queueItemDraft("open_loops", join(brainDir, "07-Open Loops", "Extracted Open Loops.md"), item, now))
   ];
   const merged = nextDrafts.map((item) => {
     const existing = previousById.get(item.id);
-    return existing ? { ...item, status: existing.status, createdAt: existing.createdAt, updatedAt: existing.updatedAt, lastConfirmedAt: existing.lastConfirmedAt } : item;
+    return existing ? {
+      ...item,
+      text: existing.editedAt ? existing.text : item.text,
+      entities: existing.editedAt ? existing.entities : item.entities,
+      sourceRefs: existing.editedAt && existing.sourceRefs?.length ? existing.sourceRefs : item.sourceRefs,
+      status: existing.status,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+      lastConfirmedAt: existing.lastConfirmedAt,
+      originalText: existing.originalText,
+      editedAt: existing.editedAt
+    } : item;
   });
   await writeReviewQueue(paths.reviewQueuePath, merged);
   await writeMemoryIndex(paths.memoryIndexPath, merged);
@@ -1194,6 +1226,7 @@ function normalizeMemoryType(value: string): MemoryType {
   if (normalized === "goal") return "goal";
   if (normalized === "person" || normalized === "people") return "person";
   if (normalized === "workflow") return "workflow";
+  if (normalized === "open_loop" || normalized === "open loop" || normalized === "openloop") return "open_loop";
   return "project";
 }
 
@@ -1220,7 +1253,12 @@ export async function reviewDraftMemories(options: ReviewOptions = {}): Promise<
   const approveIds = new Set(options.approve ?? []);
   const rejectIds = new Set(options.reject ?? []);
   const outdateIds = new Set(options.outdate ?? []);
-  if (!options.approveAll && approveIds.size === 0 && rejectIds.size === 0 && outdateIds.size === 0) {
+  const editId = options.editId?.trim();
+  const editText = options.editText?.trim();
+  if ((editId && !editText) || (!editId && editText)) {
+    throw new Error("Editing requires both --edit ID and --text TEXT.");
+  }
+  if (!options.approveAll && approveIds.size === 0 && rejectIds.size === 0 && outdateIds.size === 0 && !editId) {
     return {
       action: "list",
       count: queue.length,
@@ -1252,20 +1290,35 @@ export async function reviewDraftMemories(options: ReviewOptions = {}): Promise<
   const unknownApprove = [...approveIds].filter((id) => !knownIds.has(id));
   const unknownReject = [...rejectIds].filter((id) => !knownIds.has(id));
   const unknownOutdate = [...outdateIds].filter((id) => !knownIds.has(id));
-  if (unknownApprove.length > 0 || unknownReject.length > 0 || unknownOutdate.length > 0) {
-    throw new Error(`Unknown review id(s): ${[...unknownApprove, ...unknownReject, ...unknownOutdate].join(", ")}`);
+  const unknownEdit = editId && !knownIds.has(editId) ? [editId] : [];
+  if (unknownApprove.length > 0 || unknownReject.length > 0 || unknownOutdate.length > 0 || unknownEdit.length > 0) {
+    throw new Error(`Unknown review id(s): ${[...unknownApprove, ...unknownReject, ...unknownOutdate, ...unknownEdit].join(", ")}`);
   }
 
   const newlyApproved: MemoryReviewItem[] = [];
+  let edited = 0;
   const updated = queue.map((item) => {
-    if (toApprove.has(item.id)) {
-      const next = { ...item, status: "approved" as const, updatedAt: now, lastConfirmedAt: now };
-      if (item.status !== "approved") newlyApproved.push(next);
-      return next;
+    let next = item;
+    if (editId && editText && item.id === editId) {
+      edited += 1;
+      next = {
+        ...next,
+        text: editText,
+        originalText: next.originalText ?? next.text,
+        editedAt: now,
+        updatedAt: now,
+        lastConfirmedAt: now,
+        entities: extractEntities(editText)
+      };
     }
-    if (toReject.has(item.id)) return { ...item, status: "rejected" as const, updatedAt: now };
-    if (toOutdate.has(item.id)) return { ...item, status: "outdated" as const, updatedAt: now };
-    return item;
+    if (toApprove.has(item.id)) {
+      const approved = { ...next, status: "approved" as const, updatedAt: now, lastConfirmedAt: now };
+      if (item.status !== "approved") newlyApproved.push(approved);
+      return approved;
+    }
+    if (toReject.has(item.id)) return { ...next, status: "rejected" as const, updatedAt: now };
+    if (toOutdate.has(item.id)) return { ...next, status: "outdated" as const, updatedAt: now };
+    return next;
   });
   await writeReviewQueue(paths.reviewQueuePath, updated);
   await writeMemoryIndex(paths.memoryIndexPath, updated);
@@ -1282,6 +1335,7 @@ export async function reviewDraftMemories(options: ReviewOptions = {}): Promise<
     approved: toApprove.size,
     rejected: toReject.size,
     outdated: toOutdate.size,
+    edited,
     reviewedPath,
     queuePath: paths.reviewQueuePath,
     memoryIndexPath: paths.memoryIndexPath

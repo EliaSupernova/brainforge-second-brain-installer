@@ -22,7 +22,7 @@ writeFileSync(join(importsDir, "chatgpt-conversations.json"), JSON.stringify([
           author: { role: "user" },
           content: {
             parts: [
-              "My name is Chat Example. I prefer direct answers and backups before config edits."
+              "My name is Chat Example. I prefer direct answers and backups before config edits. I still need to follow up with RBC about account linking by Friday."
             ]
           }
         }
@@ -168,6 +168,7 @@ const profile = readFileSync(join(brainDir, "00-Identity", "Extracted Profile.md
 const preferences = readFileSync(join(brainDir, "04-Preferences", "Extracted Preferences.md"), "utf8");
 const decisions = readFileSync(join(brainDir, "03-Decisions", "Extracted Decisions.md"), "utf8");
 const workflows = readFileSync(join(brainDir, "09-System", "Extracted Workflows.md"), "utf8");
+const openLoops = readFileSync(join(brainDir, "07-Open Loops", "Extracted Open Loops.md"), "utf8");
 const chunks = readJsonl(join(brainDir, "08-Indexes", "chunks.jsonl"));
 const memoryIndex = readJsonl(join(brainDir, "08-Indexes", "memories.jsonl"));
 
@@ -175,9 +176,11 @@ assert.match(profile, /My name is Chat Example/);
 assert.match(preferences, /I prefer direct answers/);
 assert.match(decisions, /Decision: use reviewed memories/);
 assert.match(workflows, /initial plan, research, refined plan/);
+assert.match(openLoops, /follow up with RBC/);
 assert.ok(chunks.every((chunk) => Array.isArray(chunk.memoryTypes)));
 assert.ok(chunks.every((chunk) => typeof chunk.sourceCitation === "string" && chunk.sourceCitation.includes("#chunk-")));
 assert.ok(memoryIndex.length >= 4);
+assert.ok(memoryIndex.some((memory) => memory.type === "open_loop"));
 assert.ok(memoryIndex.every((memory) => Array.isArray(memory.sourceRefs) && memory.sourceRefs.length >= 1));
 assert.ok(memoryIndex.every((memory) => memory.sourceRefs[0].chunkId && memory.sourceRefs[0].sourceFile && memory.sourceRefs[0].excerpt));
 
@@ -192,13 +195,43 @@ assert.ok(reviewList.count >= 4);
 assert.ok(reviewList.items.every((item) => typeof item.id === "string" && item.id.length === 12));
 assert.ok(reviewList.items.every((item) => item.status === "pending"));
 
-const firstId = reviewList.items[0].id;
-const secondId = reviewList.items[1].id;
+const defaultDraftSearch = runJson(["search", "direct answers backups config edits", "--brain-dir", brainDir, "--source-backed", "--json"]);
+assert.deepEqual(defaultDraftSearch, []);
+
+const pendingOpenLoopSearch = runJson(["search", "follow up RBC account linking", "--brain-dir", brainDir, "--type", "open_loop", "--status", "pending", "--source-backed", "--json"]);
+assert.ok(pendingOpenLoopSearch.length > 0);
+assert.ok(pendingOpenLoopSearch.every((result) => result.type === "open_loop" && result.status === "pending"));
+assert.ok(pendingOpenLoopSearch.every((result) => typeof result.recencyScore === "number"));
+
+const preferenceItem = reviewList.items.find((item) => item.section === "preferences" && /direct answers/.test(item.text));
+assert.ok(preferenceItem);
+const editedText = "I prefer concise direct answers and verified backups before config edits.";
+const edited = runJson(["review", "--brain-dir", brainDir, "--edit", preferenceItem.id, "--text", editedText, "--json"]);
+assert.equal(edited.edited, 1);
+assert.match(runFailure(["review", "--brain-dir", brainDir, "--edit", "missing-id", "--text", "Nope", "--json"]), /Unknown review id/);
+assert.match(runFailure(["review", "--brain-dir", brainDir, "--edit", preferenceItem.id, "--text", "   ", "--json"]), /Editing requires/);
+
+const afterEdit = runJson(["review", "--brain-dir", brainDir, "--json"]);
+const editedItem = afterEdit.items.find((item) => item.id === preferenceItem.id);
+assert.equal(editedItem?.text, editedText);
+assert.equal(editedItem?.originalText, preferenceItem.text);
+assert.ok(editedItem?.editedAt);
+assert.equal(editedItem?.sourceRefs?.[0]?.chunkId, preferenceItem.sourceRefs?.[0]?.chunkId);
+
+const memoryIndexAfterEdit = readJsonl(join(brainDir, "08-Indexes", "memories.jsonl"));
+const editedRecord = memoryIndexAfterEdit.find((memory) => memory.id === preferenceItem.id);
+assert.equal(editedRecord?.text, editedText);
+assert.equal(editedRecord?.sourceRefs?.[0]?.chunkId, preferenceItem.sourceRefs?.[0]?.chunkId);
+
+const firstId = preferenceItem.id;
+const secondId = reviewList.items.find((item) => item.id !== firstId)?.id;
+assert.ok(secondId);
 const selected = runJson(["review", "--brain-dir", brainDir, "--approve", firstId, "--reject", secondId, "--json"]);
 assert.equal(selected.action, "update");
 assert.equal(selected.approved, 1);
 assert.equal(selected.rejected, 1);
 assert.match(readFileSync(selected.reviewedPath, "utf8"), new RegExp(firstId));
+assert.match(readFileSync(selected.reviewedPath, "utf8"), /concise direct answers/);
 
 const afterSelected = runJson(["review", "--brain-dir", brainDir, "--json"]);
 assert.equal(afterSelected.items.find((item) => item.id === firstId)?.status, "approved");
@@ -209,6 +242,8 @@ runJson(["import", "--brain-dir", brainDir, "--imports-dir", importsDir, "--embe
 const afterReimport = runJson(["review", "--brain-dir", brainDir, "--json"]);
 assert.equal(afterReimport.items.find((item) => item.id === firstId)?.status, "approved");
 assert.equal(afterReimport.items.find((item) => item.id === secondId)?.status, "rejected");
+assert.equal(afterReimport.items.find((item) => item.id === firstId)?.text, editedText);
+assert.ok(afterReimport.items.find((item) => item.id === firstId)?.editedAt);
 
 const approved = runJson(["review", "--brain-dir", brainDir, "--approve-all", "--json"]);
 assert.equal(approved.action, "approve-all");
@@ -216,10 +251,47 @@ assert.ok(approved.approved >= 1);
 assert.ok(existsSync(approved.memoryIndexPath));
 assert.match(readFileSync(approved.reviewedPath, "utf8"), /Approved/);
 
+const memoryIndexPath = join(brainDir, "08-Indexes", "memories.jsonl");
+const recordsBeforeRecency = readJsonl(memoryIndexPath);
+const sourceTemplate = recordsBeforeRecency.find((memory) => memory.sourceRefs?.[0])?.sourceRefs ?? [];
+const oldDate = "2020-01-01T00:00:00.000Z";
+const newDate = new Date().toISOString();
+writeJsonlFile(memoryIndexPath, [
+  ...recordsBeforeRecency,
+  {
+    id: "recency-old",
+    type: "preference",
+    text: "Recency ranking sentinel memory prefers durable review.",
+    status: "approved",
+    createdAt: oldDate,
+    updatedAt: oldDate,
+    observedAt: oldDate,
+    lastConfirmedAt: oldDate,
+    sourceRefs: sourceTemplate,
+    entities: []
+  },
+  {
+    id: "recency-new",
+    type: "preference",
+    text: "Recency ranking sentinel memory prefers durable review.",
+    status: "approved",
+    createdAt: newDate,
+    updatedAt: newDate,
+    observedAt: newDate,
+    lastConfirmedAt: newDate,
+    sourceRefs: sourceTemplate,
+    entities: []
+  }
+]);
+const recencySearch = runJson(["search", "recency ranking sentinel durable review", "--brain-dir", brainDir, "--type", "preference", "--status", "approved", "--source-backed", "--json"]);
+assert.equal(recencySearch[0].id, "recency-new");
+assert.ok(recencySearch[0].recencyScore > recencySearch.find((result) => result.id === "recency-old").recencyScore);
+
 const sourceBackedSearch = runJson(["search", "direct answers backups config edits", "--brain-dir", brainDir, "--type", "preference", "--status", "approved", "--source-backed", "--json"]);
-assert.ok(sourceBackedSearch.some((result) => /direct answers/.test(result.text)));
+assert.ok(sourceBackedSearch.some((result) => /concise direct answers/.test(result.text)));
 assert.ok(sourceBackedSearch.every((result) => result.type === "preference" && result.status === "approved"));
 assert.ok(sourceBackedSearch.every((result) => Array.isArray(result.sources) && result.sources[0].chunkId));
+assert.ok(sourceBackedSearch.every((result) => typeof result.recencyScore === "number" && result.why.some((why) => why.startsWith("recency="))));
 
 const outdated = runJson(["review", "--brain-dir", brainDir, "--outdate", sourceBackedSearch[0].id, "--json"]);
 assert.equal(outdated.outdated, 1);
@@ -277,6 +349,24 @@ function runJson(args, env = {}) {
   return JSON.parse(output);
 }
 
+function runFailure(args, env = {}) {
+  try {
+    execFileSync(process.execPath, [cli, ...args], {
+      cwd: root,
+      env: { ...process.env, ...env },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+  } catch (error) {
+    return error.stderr?.toString() ?? error.message;
+  }
+  throw new Error(`Expected command to fail: ${args.join(" ")}`);
+}
+
 function readJsonl(path) {
   return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function writeJsonlFile(path, records) {
+  writeFileSync(path, records.map((record) => JSON.stringify(record)).join("\n") + "\n");
 }

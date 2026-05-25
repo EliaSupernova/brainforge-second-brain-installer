@@ -54,7 +54,7 @@ The machine-readable memory contract lives in `08-Indexes/memories.jsonl`.
 Each record contains:
 
 - `id`
-- `type`: `identity`, `preference`, `decision`, `project`, `goal`, `person`, or `workflow`
+- `type`: `identity`, `preference`, `decision`, `project`, `goal`, `person`, `workflow`, or `open_loop`
 - `status`: `pending`, `approved`, `rejected`, or `outdated`
 - `text`
 - `sourceRefs[]` with chunk ID, source file, role, excerpt, and citation
@@ -62,16 +62,18 @@ Each record contains:
 - `createdAt`, `updatedAt`, `observedAt`, and optional `lastConfirmedAt`
 
 Approved memories are appended to `09-System/Reviewed Memories.md` for
-human-readable agent recall. MCP clients should prefer `approved` source-backed
-memory and should label `pending` or `outdated` memory if the user explicitly
-requests it.
+human-readable agent recall. Edited memories keep their stable review ID and
+source references, while `originalText` and `editedAt` preserve the audit trail.
+MCP clients should prefer `approved` source-backed memory and should label
+`pending` or `outdated` memory if the user explicitly requests it.
 
 ## Hybrid Search
 
 Chunk search combines vector similarity with keyword and entity overlap.
-Source-backed memory search combines memory text, entities, and source excerpts
-with type/status filters. This is intentionally lightweight in the local MVP
-and keeps the default setup free of hosted services or database requirements.
+Source-backed memory search combines memory text, entities, source excerpts,
+and recency with type/status filters. Default source-backed search returns
+`approved` memory only. This is intentionally lightweight in the local MVP and
+keeps the default setup free of hosted services or database requirements.
 
 ## Company Task Runtime
 
