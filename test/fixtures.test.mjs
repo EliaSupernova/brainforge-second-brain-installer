@@ -162,20 +162,29 @@ const imported = runJson(["import", "--brain-dir", brainDir, "--imports-dir", im
 assert.equal(imported.files, 3);
 assert.equal(imported.messages, 6);
 assert.equal(imported.embedding.provider, "brainforge-local-hash");
+assert.ok(imported.written.includes(join(brainDir, "08-Indexes", "memories.jsonl")));
 
 const profile = readFileSync(join(brainDir, "00-Identity", "Extracted Profile.md"), "utf8");
 const preferences = readFileSync(join(brainDir, "04-Preferences", "Extracted Preferences.md"), "utf8");
 const decisions = readFileSync(join(brainDir, "03-Decisions", "Extracted Decisions.md"), "utf8");
 const workflows = readFileSync(join(brainDir, "09-System", "Extracted Workflows.md"), "utf8");
+const chunks = readJsonl(join(brainDir, "08-Indexes", "chunks.jsonl"));
+const memoryIndex = readJsonl(join(brainDir, "08-Indexes", "memories.jsonl"));
 
 assert.match(profile, /My name is Chat Example/);
 assert.match(preferences, /I prefer direct answers/);
 assert.match(decisions, /Decision: use reviewed memories/);
 assert.match(workflows, /initial plan, research, refined plan/);
+assert.ok(chunks.every((chunk) => Array.isArray(chunk.memoryTypes)));
+assert.ok(chunks.every((chunk) => typeof chunk.sourceCitation === "string" && chunk.sourceCitation.includes("#chunk-")));
+assert.ok(memoryIndex.length >= 4);
+assert.ok(memoryIndex.every((memory) => Array.isArray(memory.sourceRefs) && memory.sourceRefs.length >= 1));
+assert.ok(memoryIndex.every((memory) => memory.sourceRefs[0].chunkId && memory.sourceRefs[0].sourceFile && memory.sourceRefs[0].excerpt));
 
 const search = runJson(["search", "reviewed memories local privacy", "--brain-dir", brainDir, "--json"]);
 assert.ok(Array.isArray(search));
 assert.ok(search.length > 0);
+assert.ok(search.every((result) => typeof result.vectorScore === "number" && typeof result.keywordScore === "number"));
 
 const reviewList = runJson(["review", "--brain-dir", brainDir, "--json"]);
 assert.equal(reviewList.action, "list");
@@ -194,6 +203,7 @@ assert.match(readFileSync(selected.reviewedPath, "utf8"), new RegExp(firstId));
 const afterSelected = runJson(["review", "--brain-dir", brainDir, "--json"]);
 assert.equal(afterSelected.items.find((item) => item.id === firstId)?.status, "approved");
 assert.equal(afterSelected.items.find((item) => item.id === secondId)?.status, "rejected");
+assert.ok(afterSelected.items.find((item) => item.id === firstId)?.sourceRefs?.[0]?.chunkId);
 
 runJson(["import", "--brain-dir", brainDir, "--imports-dir", importsDir, "--embedding-provider", "hash", "--json"]);
 const afterReimport = runJson(["review", "--brain-dir", brainDir, "--json"]);
@@ -203,7 +213,18 @@ assert.equal(afterReimport.items.find((item) => item.id === secondId)?.status, "
 const approved = runJson(["review", "--brain-dir", brainDir, "--approve-all", "--json"]);
 assert.equal(approved.action, "approve-all");
 assert.ok(approved.approved >= 1);
+assert.ok(existsSync(approved.memoryIndexPath));
 assert.match(readFileSync(approved.reviewedPath, "utf8"), /Approved/);
+
+const sourceBackedSearch = runJson(["search", "direct answers backups config edits", "--brain-dir", brainDir, "--type", "preference", "--status", "approved", "--source-backed", "--json"]);
+assert.ok(sourceBackedSearch.some((result) => /direct answers/.test(result.text)));
+assert.ok(sourceBackedSearch.every((result) => result.type === "preference" && result.status === "approved"));
+assert.ok(sourceBackedSearch.every((result) => Array.isArray(result.sources) && result.sources[0].chunkId));
+
+const outdated = runJson(["review", "--brain-dir", brainDir, "--outdate", sourceBackedSearch[0].id, "--json"]);
+assert.equal(outdated.outdated, 1);
+const afterOutdatedSearch = runJson(["search", "direct answers backups config edits", "--brain-dir", brainDir, "--status", "outdated", "--source-backed", "--json"]);
+assert.ok(afterOutdatedSearch.some((result) => result.status === "outdated"));
 
 const doctor = runJson(["doctor", "--brain-dir", brainDir, "--json"]);
 assert.equal(doctor.find((check) => check.name === "Memory review")?.status, "pass");
@@ -254,4 +275,8 @@ function runJson(args, env = {}) {
     encoding: "utf8"
   });
   return JSON.parse(output);
+}
+
+function readJsonl(path) {
+  return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }

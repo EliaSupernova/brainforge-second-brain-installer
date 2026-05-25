@@ -13,9 +13,10 @@ This repository contains a working MVP skeleton:
 - Creates an `AI-Brain` vault and an imports folder.
 - Parses ChatGPT-style exports, Claude-style exports, Markdown, and plain text.
 - Chunks and embeds content locally with a deterministic vector fallback.
-- Extracts draft memories into readable Markdown notes.
-- Lets users review draft extracted memories and explicitly promote them into reviewed memory.
-- Exposes MCP tools for search, reading, saving, importing, and doctor checks.
+- Extracts typed draft memories into readable Markdown notes.
+- Writes a machine-readable `08-Indexes/memories.jsonl` memory index with source citations, memory types, entities, and review status.
+- Lets users review draft extracted memories and explicitly approve, reject, or mark them outdated.
+- Exposes MCP tools for source-backed search, reading, saving, importing, review, and doctor checks.
 - Adds a multi-agent orchestration protocol with planner, researcher, architect, builder, tester, security reviewer, docs/release engineer, and critic roles.
 - Generates scoped role prompts inside the vault so long tasks can be split across specialized agents.
 - Starts and advances tracked company tasks with current owner state, phase packets, and handoff links.
@@ -43,6 +44,7 @@ brainforge setup
 For GitHub clone instructions, see [docs/INSTALL.md](docs/INSTALL.md).
 For publishing your own repo, see [docs/GITHUB_PUBLISHING.md](docs/GITHUB_PUBLISHING.md).
 For prior-art research and the product roadmap, see [docs/PRIOR_ART_AND_ROADMAP.md](docs/PRIOR_ART_AND_ROADMAP.md).
+For the prior-art license screen, see [docs/PRIOR_ART_LICENSE_AUDIT.md](docs/PRIOR_ART_LICENSE_AUDIT.md).
 
 By default BrainForge does not edit Claude or Codex configs. To create backups and add adapters:
 
@@ -78,9 +80,9 @@ brainforge plugin install --yes
 ```bash
 brainforge setup [--brain-dir PATH] [--imports-dir PATH] [--configure] [--yes]
 brainforge import [--brain-dir PATH] [--imports-dir PATH] [--embedding-provider auto|ollama|hash]
-brainforge search "query" [--brain-dir PATH] [--limit 5]
+brainforge search "query" [--brain-dir PATH] [--limit 5] [--source-backed] [--type identity|preference|decision|project|goal|person|workflow] [--status pending|approved|rejected|outdated]
 brainforge doctor [--brain-dir PATH] [--strict] [--json]
-brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--approve-all] [--json]
+brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--outdate ID[,ID]] [--approve-all] [--json]
 brainforge protocol [--json]
 brainforge handoff --phase PHASE --from AGENT --to AGENT --summary TEXT [--brain-dir PATH]
 brainforge company start --objective TEXT [--title TEXT] [--brain-dir PATH] [--json]
@@ -135,6 +137,25 @@ export BRAINFORGE_EMBEDDING_MODEL=embeddinggemma
 export BRAINFORGE_OLLAMA_URL=http://localhost:11434
 ```
 
+## Source-Backed Memory
+
+BrainForge keeps two search surfaces:
+
+- chunk search over imported conversations and embeddings
+- source-backed memory search over `08-Indexes/memories.jsonl`
+
+Each memory record stores its type, review status, source chunk, source file,
+conversation title, role, excerpt, entities, and timestamps. This lets Claude
+Code and Codex answer from reviewed memory while still showing where the memory
+came from.
+
+Examples:
+
+```bash
+brainforge search "backups before config edits" --source-backed --type preference --status approved
+brainforge review --outdate abc123def456
+```
+
 ## Claude Code / Codex Design
 
 BrainForge follows the native extension points:
@@ -163,6 +184,8 @@ BrainForge is intentionally conservative:
 - `brainforge doctor --strict` exits non-zero when any warning or failure remains.
 - Extracted memories are labeled as draft/unreviewed.
 - Review state is tracked in `08-Indexes/memory-review-queue.json`.
+- Source-backed memory state is tracked in `08-Indexes/memories.jsonl`.
+- Memory statuses include `pending`, `approved`, `rejected`, and `outdated`.
 - Reviewed memories are appended to `09-System/Reviewed Memories.md`; they are not silently overwritten.
 - Everything is local by default.
 

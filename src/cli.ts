@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, importExports, installPlugin, listCompanyTasks, orchestrationProtocol, pluginInfo, reviewDraftMemories, searchBrain, setupBrain, startCompanyTask } from "./core.js";
+import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, importExports, installPlugin, listCompanyTasks, orchestrationProtocol, pluginInfo, reviewDraftMemories, searchBrain, searchMemories, setupBrain, startCompanyTask, type MemoryReviewStatus, type MemoryType } from "./core.js";
 import { runMcpServer } from "./mcp.js";
 
 interface ParsedArgs {
@@ -32,14 +32,38 @@ async function main(): Promise<void> {
       case "search": {
         const query = args.positionals.join(" ").trim();
         if (!query) throw new Error("Usage: brainforge search \"your query\"");
-        const results = await searchBrain(query, stringFlag(args, "brain-dir"), numberFlag(args, "limit") ?? 5, {
+        const brainDir = stringFlag(args, "brain-dir");
+        const limit = numberFlag(args, "limit") ?? 5;
+        const memoryType = memoryTypeFlag(args);
+        const memoryStatus = memoryStatusFlag(args);
+        const sourceBacked = Boolean(args.flags["source-backed"]) || Boolean(memoryType) || Boolean(memoryStatus);
+        if (sourceBacked) {
+          const memoryResults = await searchMemories(query, brainDir, limit, { type: memoryType, status: memoryStatus });
+          await outputResult(memoryResults.map((result) => ({
+            id: result.memory.id,
+            score: result.score,
+            type: result.memory.type,
+            status: result.memory.status,
+            text: result.memory.text,
+            sources: result.matchedSourceRefs,
+            why: result.why
+          })), Boolean(args.flags.json));
+          break;
+        }
+        const results = await searchBrain(query, brainDir, limit, {
           model: stringFlag(args, "embedding-model"),
           ollamaUrl: stringFlag(args, "ollama-url")
         });
         await outputResult(results.map((result) => ({
           score: result.score,
+          vectorScore: result.vectorScore,
+          keywordScore: result.keywordScore,
+          entityScore: result.entityScore,
           title: result.chunk.conversationTitle,
           source: result.chunk.sourceFile,
+          citation: result.chunk.sourceCitation,
+          memoryTypes: result.chunk.memoryTypes,
+          entities: result.chunk.entities,
           text: result.chunk.text
         })), Boolean(args.flags.json));
         break;
@@ -66,7 +90,8 @@ async function main(): Promise<void> {
           brainDir: stringFlag(args, "brain-dir"),
           approveAll: Boolean(args.flags["approve-all"]),
           approve: listFlag(args, "approve"),
-          reject: listFlag(args, "reject")
+          reject: listFlag(args, "reject"),
+          outdate: listFlag(args, "outdate")
         }), Boolean(args.flags.json));
         break;
       case "protocol":
@@ -221,6 +246,20 @@ function embeddingProviderFlag(args: ParsedArgs): "auto" | "ollama" | "hash" | u
   throw new Error("--embedding-provider must be one of: auto, ollama, hash");
 }
 
+function memoryTypeFlag(args: ParsedArgs): MemoryType | undefined {
+  const value = stringFlag(args, "type");
+  if (value === undefined) return undefined;
+  if (value === "identity" || value === "preference" || value === "decision" || value === "project" || value === "goal" || value === "person" || value === "workflow") return value;
+  throw new Error("--type must be one of: identity, preference, decision, project, goal, person, workflow");
+}
+
+function memoryStatusFlag(args: ParsedArgs): MemoryReviewStatus | undefined {
+  const value = stringFlag(args, "status");
+  if (value === undefined) return undefined;
+  if (value === "pending" || value === "approved" || value === "rejected" || value === "outdated") return value;
+  throw new Error("--status must be one of: pending, approved, rejected, outdated");
+}
+
 async function outputResult(value: unknown, json: boolean): Promise<void> {
   if (json) {
     console.log(JSON.stringify(value, null, 2));
@@ -246,9 +285,9 @@ function printHelp(): void {
 Commands:
   brainforge setup [--brain-dir PATH] [--imports-dir PATH] [--configure] [--yes] [--json]
   brainforge import [--brain-dir PATH] [--imports-dir PATH] [--embedding-provider auto|ollama|hash] [--embedding-model MODEL] [--ollama-url URL] [--json]
-  brainforge search "query" [--brain-dir PATH] [--limit 5] [--embedding-model MODEL] [--ollama-url URL] [--json]
+  brainforge search "query" [--brain-dir PATH] [--limit 5] [--source-backed] [--type identity|preference|decision|project|goal|person|workflow] [--status pending|approved|rejected|outdated] [--embedding-model MODEL] [--ollama-url URL] [--json]
   brainforge doctor [--brain-dir PATH] [--strict] [--json]
-  brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--approve-all] [--json]
+  brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--outdate ID[,ID]] [--approve-all] [--json]
   brainforge protocol [--json]
   brainforge handoff --phase PHASE --from AGENT --to AGENT --summary TEXT [--brain-dir PATH] [--evidence TEXT] [--next TEXT] [--questions TEXT]
   brainforge company start --objective TEXT [--title TEXT] [--brain-dir PATH] [--json]

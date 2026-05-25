@@ -29,6 +29,7 @@ export interface BrainPaths {
   vectorsPath: string;
   manifestPath: string;
   reviewQueuePath: string;
+  memoryIndexPath: string;
 }
 
 export interface SetupOptions {
@@ -53,6 +54,7 @@ export interface ReviewOptions {
   approveAll?: boolean;
   approve?: string[];
   reject?: string[];
+  outdate?: string[];
 }
 
 export type EmbeddingProviderChoice = "auto" | "ollama" | "hash";
@@ -86,6 +88,11 @@ export interface ChunkRecord {
   conversationTitle: string;
   role: string;
   text: string;
+  chunkIndex: number;
+  sourceCitation: string;
+  memoryTypes: string[];
+  entities: string[];
+  keywords: string[];
 }
 
 export interface VectorRecord {
@@ -95,7 +102,43 @@ export interface VectorRecord {
 
 export interface SearchResult {
   score: number;
+  vectorScore: number;
+  keywordScore: number;
+  entityScore: number;
   chunk: ChunkRecord;
+}
+
+export type MemoryType = "identity" | "preference" | "decision" | "project" | "goal" | "person" | "workflow";
+
+export interface SourceRef {
+  chunkId: string;
+  sourceFile: string;
+  conversationTitle: string;
+  role: string;
+  excerpt: string;
+  citation: string;
+}
+
+export interface MemoryRecord {
+  id: string;
+  type: MemoryType;
+  text: string;
+  status: MemoryReviewStatus;
+  createdAt: string;
+  updatedAt: string;
+  observedAt: string;
+  lastConfirmedAt?: string;
+  sourceRefs: SourceRef[];
+  entities: string[];
+}
+
+export interface MemorySearchResult {
+  score: number;
+  keywordScore: number;
+  entityScore: number;
+  memory: MemoryRecord;
+  matchedSourceRefs: SourceRef[];
+  why: string[];
 }
 
 export interface HandoffInput {
@@ -164,9 +207,18 @@ export interface DraftMemoryItem {
   section: string;
   file: string;
   text: string;
+  memoryType?: string;
+  sourceFile?: string;
+  conversationTitle?: string;
+  sourceCitation?: string;
+  evidence?: string;
+  sourceRefs?: SourceRef[];
+  entities?: string[];
+  observedAt?: string;
+  lastConfirmedAt?: string;
 }
 
-export type MemoryReviewStatus = "pending" | "approved" | "rejected";
+export type MemoryReviewStatus = "pending" | "approved" | "rejected" | "outdated";
 
 export interface MemoryReviewItem extends DraftMemoryItem {
   status: MemoryReviewStatus;
@@ -268,7 +320,8 @@ export function brainPaths(brainDir = DEFAULT_BRAIN_DIR, importsDir = DEFAULT_IM
     chunksPath: join(indexDir, "chunks.jsonl"),
     vectorsPath: join(indexDir, "vectors.jsonl"),
     manifestPath: join(indexDir, "manifest.json"),
-    reviewQueuePath: join(indexDir, "memory-review-queue.json")
+    reviewQueuePath: join(indexDir, "memory-review-queue.json"),
+    memoryIndexPath: join(indexDir, "memories.jsonl")
   };
 }
 
@@ -448,7 +501,7 @@ export async function importExports(options: ImportOptions = {}): Promise<Record
     embedding: embeddingRun.metadata
   }, null, 2), "utf8");
 
-  const memoryDrafts = extractMemoryDrafts(parsed);
+  const memoryDrafts = extractMemoryDrafts(chunks);
   await writeExtractedMemories(paths.brainDir, memoryDrafts);
 
   return {
@@ -468,7 +521,8 @@ export async function importExports(options: ImportOptions = {}): Promise<Record
       join(paths.brainDir, "05-Goals", "Extracted Goals.md"),
       join(paths.brainDir, "02-People", "Extracted People.md"),
       join(paths.brainDir, "09-System", "Extracted Workflows.md"),
-      paths.reviewQueuePath
+      paths.reviewQueuePath,
+      paths.memoryIndexPath
     ]
   };
 }
@@ -609,7 +663,16 @@ function chunkMessages(messages: ParsedMessage[]): ChunkRecord[] {
         .update(`${message.sourceFile}:${message.conversationTitle}:${message.role}:${index}:${text}`)
         .digest("hex")
         .slice(0, 24);
-      chunks.push({ id, ...message, text });
+      chunks.push({
+        id,
+        ...message,
+        text,
+        chunkIndex: index,
+        sourceCitation: `${message.conversationTitle} (${message.role}) from ${message.sourceFile}#chunk-${index + 1}`,
+        memoryTypes: classifyMemoryTypes(text),
+        entities: extractEntities(text),
+        keywords: extractKeywords(text)
+      });
     });
   }
   return chunks;
@@ -764,6 +827,44 @@ function tokenize(text: string): string[] {
     .match(/[a-z0-9][a-z0-9'-]{1,}/g)?.slice(0, 2000) ?? [];
 }
 
+function extractKeywords(text: string): string[] {
+  const stopwords = new Set(["about", "after", "again", "before", "being", "could", "every", "from", "have", "into", "just", "like", "more", "need", "should", "that", "their", "then", "there", "these", "this", "through", "want", "what", "when", "where", "with", "would", "your"]);
+  return unique(tokenize(text).filter((token) => token.length > 2 && !stopwords.has(token)), 80);
+}
+
+function classifyMemoryTypes(text: string): MemoryType[] {
+  const lowered = text.toLowerCase();
+  const types: MemoryType[] = [];
+  if (/\b(i am|i'm|my name|i work|i live|i run|i build|my role|my company)\b/.test(lowered)) types.push("identity");
+  if (/\b(i prefer|i like|i want|i need|always|never|don't|do not|hate|make sure)\b/.test(lowered)) types.push("preference");
+  if (/\b(project|working on|building|repo|course|startup|product|brand)\b/.test(lowered)) types.push("project");
+  if (/\b(decision|decided|we decided|i decided|going with|we will|we should)\b/.test(lowered)) types.push("decision");
+  if (/\b(goal|trying to|i want to|we want to|north star|objective)\b/.test(lowered)) types.push("goal");
+  if (/\b(workflow|process|steps|pipeline|handoff|automation|routine|when .* then|first .* then)\b/.test(lowered)) types.push("workflow");
+  if (extractEntities(text).length > 0) types.push("person");
+  return unique(types, 8) as MemoryType[];
+}
+
+function extractEntities(text: string): string[] {
+  const ignored = new Set(["The", "This", "That", "What", "When", "Where", "Why", "How", "Create", "Decision", "Goal", "Project", "Workflow", "Memory", "Brain", "BrainForge"]);
+  const names = text.match(/\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z][a-zA-Z0-9]*){0,3}\b/g) ?? [];
+  return unique(names.map((name) => name.trim()).filter((name) => !ignored.has(name) && !/^(I|My|We|A|An)$/.test(name)), 30);
+}
+
+function lexicalScore(queryTokens: string[], candidateTokens: string[]): number {
+  if (queryTokens.length === 0 || candidateTokens.length === 0) return 0;
+  const candidateSet = new Set(candidateTokens);
+  const matches = unique(queryTokens, 200).filter((token) => candidateSet.has(token)).length;
+  return Number((matches / Math.max(1, Math.min(unique(queryTokens, 200).length, 12))).toFixed(6));
+}
+
+function entityOverlapScore(queryEntities: string[], candidateEntities: string[]): number {
+  if (queryEntities.length === 0 || candidateEntities.length === 0) return 0;
+  const candidateSet = new Set(candidateEntities.map((entity) => entity.toLowerCase()));
+  const matches = unique(queryEntities.map((entity) => entity.toLowerCase()), 50).filter((entity) => candidateSet.has(entity)).length;
+  return Number((matches / Math.max(1, queryEntities.length)).toFixed(6));
+}
+
 async function writeJsonl(pathLike: string, records: unknown[]): Promise<void> {
   await ensureDir(dirname(pathLike));
   await writeFile(pathLike, records.map((record) => JSON.stringify(record)).join("\n") + "\n", "utf8");
@@ -786,9 +887,52 @@ export async function searchBrain(query: string, brainDir?: string, limit = 5, o
   const chunkMap = new Map(chunks.map((chunk) => [chunk.id, chunk]));
   const manifest = await readManifest(paths.manifestPath);
   const queryVector = await embedQueryForIndex(query, manifest, options);
+  const queryTokens = tokenize(query);
+  const queryEntities = extractEntities(query);
   return vectors
-    .map((record) => ({ score: cosine(queryVector, record.vector), chunk: chunkMap.get(record.id) }))
-    .filter((item): item is SearchResult => Boolean(item.chunk))
+    .map((record) => {
+      const chunk = chunkMap.get(record.id);
+      if (!chunk) return null;
+      const vectorScore = Math.max(0, cosine(queryVector, record.vector));
+      const keywordScore = lexicalScore(queryTokens, chunk.keywords.length > 0 ? chunk.keywords : tokenize(chunk.text));
+      const entityScore = entityOverlapScore(queryEntities, chunk.entities);
+      const score = Number(((vectorScore * 0.65) + (keywordScore * 0.25) + (entityScore * 0.1)).toFixed(6));
+      return { score, vectorScore, keywordScore, entityScore, chunk };
+    })
+    .filter((item): item is SearchResult => Boolean(item))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
+export async function searchMemories(
+  query: string,
+  brainDir?: string,
+  limit = 5,
+  filters: { type?: MemoryType; status?: MemoryReviewStatus } = {}
+): Promise<MemorySearchResult[]> {
+  const paths = brainPaths(brainDir);
+  if (!await pathExists(paths.memoryIndexPath)) return [];
+  const memories = (await readJsonl<MemoryRecord>(paths.memoryIndexPath))
+    .filter((memory) => !filters.type || memory.type === filters.type)
+    .filter((memory) => !filters.status || memory.status === filters.status)
+    .filter((memory) => filters.status || memory.status !== "rejected" && memory.status !== "outdated");
+  const queryTokens = tokenize(query);
+  const queryEntities = extractEntities(query);
+  return memories
+    .map((memory) => {
+      const memoryTokens = extractKeywords(`${memory.text} ${memory.entities.join(" ")} ${memory.sourceRefs.map((source) => source.excerpt).join(" ")}`);
+      const keywordScore = lexicalScore(queryTokens, memoryTokens);
+      const entityScore = entityOverlapScore(queryEntities, memory.entities);
+      const score = Number(((keywordScore * 0.8) + (entityScore * 0.2)).toFixed(6));
+      const why = [
+        keywordScore > 0 ? `keyword=${keywordScore}` : "",
+        entityScore > 0 ? `entity=${entityScore}` : "",
+        `status=${memory.status}`,
+        `type=${memory.type}`
+      ].filter(Boolean);
+      return { score, keywordScore, entityScore, memory, matchedSourceRefs: memory.sourceRefs.slice(0, 3), why };
+    })
+    .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 }
@@ -818,38 +962,70 @@ function cosine(a: number[], b: number[]): number {
   return Number(sum.toFixed(6));
 }
 
-interface MemoryDrafts {
-  identity: string[];
-  preferences: string[];
-  projects: string[];
-  decisions: string[];
-  goals: string[];
-  people: string[];
-  workflows: string[];
+interface MemoryDraftCandidate {
+  text: string;
+  type: MemoryType;
+  sourceRef: SourceRef;
+  entities: string[];
+  observedAt: string;
 }
 
-function extractMemoryDrafts(messages: ParsedMessage[]): MemoryDrafts {
+interface MemoryDrafts {
+  identity: MemoryDraftCandidate[];
+  preferences: MemoryDraftCandidate[];
+  projects: MemoryDraftCandidate[];
+  decisions: MemoryDraftCandidate[];
+  goals: MemoryDraftCandidate[];
+  people: MemoryDraftCandidate[];
+  workflows: MemoryDraftCandidate[];
+}
+
+function extractMemoryDrafts(chunks: ChunkRecord[]): MemoryDrafts {
   const drafts: MemoryDrafts = { identity: [], preferences: [], projects: [], decisions: [], goals: [], people: [], workflows: [] };
-  for (const sentence of splitSentences(messages.map((message) => message.text).join("\n"))) {
+  for (const chunk of chunks) {
+    for (const sentence of splitSentences(chunk.text)) {
     const lowered = sentence.toLowerCase();
-    if (/\b(i am|i'm|my name|i work|i live|i run|i build|my role|my company)\b/.test(lowered)) drafts.identity.push(sentence);
-    if (/\b(i prefer|i like|i want|i need|always|never|don't|do not|hate|make sure)\b/.test(lowered)) drafts.preferences.push(sentence);
-    if (/\b(project|working on|building|repo|course|startup|product|brand)\b/.test(lowered)) drafts.projects.push(sentence);
-    if (/\b(decision|decided|we decided|i decided|going with|we will|we should)\b/.test(lowered)) drafts.decisions.push(sentence);
-    if (/\b(goal|trying to|i want to|we want to|north star|objective)\b/.test(lowered)) drafts.goals.push(sentence);
-    if (/\b(workflow|process|steps|pipeline|handoff|automation|routine|when .* then|first .* then)\b/.test(lowered)) drafts.workflows.push(sentence);
+    const sourceRef = sourceRefForChunk(chunk, sentence);
+    if (/\b(i am|i'm|my name|i work|i live|i run|i build|my role|my company)\b/.test(lowered)) drafts.identity.push(memoryDraftCandidate("identity", sentence, sourceRef));
+    if (/\b(i prefer|i like|i want|i need|always|never|don't|do not|hate|make sure)\b/.test(lowered)) drafts.preferences.push(memoryDraftCandidate("preference", sentence, sourceRef));
+    if (/\b(project|working on|building|repo|course|startup|product|brand)\b/.test(lowered)) drafts.projects.push(memoryDraftCandidate("project", sentence, sourceRef));
+    if (/\b(decision|decided|we decided|i decided|going with|we will|we should)\b/.test(lowered)) drafts.decisions.push(memoryDraftCandidate("decision", sentence, sourceRef));
+    if (/\b(goal|trying to|i want to|we want to|north star|objective)\b/.test(lowered)) drafts.goals.push(memoryDraftCandidate("goal", sentence, sourceRef));
+    if (/\b(workflow|process|steps|pipeline|handoff|automation|routine|when .* then|first .* then)\b/.test(lowered)) drafts.workflows.push(memoryDraftCandidate("workflow", sentence, sourceRef));
     for (const name of sentence.match(/\b[A-Z][a-z]{2,}\b/g) ?? []) {
-      if (!["The", "This", "That", "What", "When", "Where", "Claude", "Codex", "ChatGPT"].includes(name)) drafts.people.push(name);
+      if (!["The", "This", "That", "What", "When", "Where", "Claude", "Codex", "ChatGPT"].includes(name)) drafts.people.push(memoryDraftCandidate("person", name, sourceRef));
+    }
     }
   }
   return {
-    identity: unique(drafts.identity, 60),
-    preferences: unique(drafts.preferences, 80),
-    projects: unique(drafts.projects, 80),
-    decisions: unique(drafts.decisions, 80),
-    goals: unique(drafts.goals, 80),
-    people: unique(drafts.people, 120),
-    workflows: unique(drafts.workflows, 80)
+    identity: uniqueDrafts(drafts.identity, 60),
+    preferences: uniqueDrafts(drafts.preferences, 80),
+    projects: uniqueDrafts(drafts.projects, 80),
+    decisions: uniqueDrafts(drafts.decisions, 80),
+    goals: uniqueDrafts(drafts.goals, 80),
+    people: uniqueDrafts(drafts.people, 120),
+    workflows: uniqueDrafts(drafts.workflows, 80)
+  };
+}
+
+function memoryDraftCandidate(type: MemoryType, text: string, sourceRef: SourceRef): MemoryDraftCandidate {
+  return {
+    text,
+    type,
+    sourceRef,
+    entities: extractEntities(text),
+    observedAt: new Date().toISOString()
+  };
+}
+
+function sourceRefForChunk(chunk: ChunkRecord, excerpt: string): SourceRef {
+  return {
+    chunkId: chunk.id,
+    sourceFile: chunk.sourceFile,
+    conversationTitle: chunk.conversationTitle,
+    role: chunk.role,
+    excerpt,
+    citation: chunk.sourceCitation
   };
 }
 
@@ -874,14 +1050,27 @@ function unique(items: string[], limit: number): string[] {
   return result;
 }
 
+function uniqueDrafts(items: MemoryDraftCandidate[], limit: number): MemoryDraftCandidate[] {
+  const seen = new Set<string>();
+  const result: MemoryDraftCandidate[] = [];
+  for (const item of items) {
+    const key = item.text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
 async function writeExtractedMemories(brainDir: string, drafts: MemoryDrafts): Promise<void> {
-  await writeGeneratedMemoryFile(join(brainDir, "00-Identity", "Extracted Profile.md"), memoryListMarkdown("Extracted Profile", drafts.identity));
-  await writeGeneratedMemoryFile(join(brainDir, "04-Preferences", "Extracted Preferences.md"), memoryListMarkdown("Extracted Preferences", drafts.preferences));
-  await writeGeneratedMemoryFile(join(brainDir, "01-Projects", "Extracted Projects.md"), memoryListMarkdown("Extracted Projects", drafts.projects));
-  await writeGeneratedMemoryFile(join(brainDir, "03-Decisions", "Extracted Decisions.md"), memoryListMarkdown("Extracted Decisions", drafts.decisions));
-  await writeGeneratedMemoryFile(join(brainDir, "05-Goals", "Extracted Goals.md"), memoryListMarkdown("Extracted Goals", drafts.goals));
-  await writeGeneratedMemoryFile(join(brainDir, "02-People", "Extracted People.md"), memoryListMarkdown("Extracted People", drafts.people));
-  await writeGeneratedMemoryFile(join(brainDir, "09-System", "Extracted Workflows.md"), memoryListMarkdown("Extracted Workflows", drafts.workflows));
+  await writeGeneratedMemoryFile(join(brainDir, "00-Identity", "Extracted Profile.md"), memoryListMarkdown("Extracted Profile", drafts.identity.map((item) => item.text)));
+  await writeGeneratedMemoryFile(join(brainDir, "04-Preferences", "Extracted Preferences.md"), memoryListMarkdown("Extracted Preferences", drafts.preferences.map((item) => item.text)));
+  await writeGeneratedMemoryFile(join(brainDir, "01-Projects", "Extracted Projects.md"), memoryListMarkdown("Extracted Projects", drafts.projects.map((item) => item.text)));
+  await writeGeneratedMemoryFile(join(brainDir, "03-Decisions", "Extracted Decisions.md"), memoryListMarkdown("Extracted Decisions", drafts.decisions.map((item) => item.text)));
+  await writeGeneratedMemoryFile(join(brainDir, "05-Goals", "Extracted Goals.md"), memoryListMarkdown("Extracted Goals", drafts.goals.map((item) => item.text)));
+  await writeGeneratedMemoryFile(join(brainDir, "02-People", "Extracted People.md"), memoryListMarkdown("Extracted People", drafts.people.map((item) => item.text)));
+  await writeGeneratedMemoryFile(join(brainDir, "09-System", "Extracted Workflows.md"), memoryListMarkdown("Extracted Workflows", drafts.workflows.map((item) => item.text)));
   await updateMemoryReviewQueue(brainDir, drafts);
 }
 
@@ -902,27 +1091,36 @@ async function updateMemoryReviewQueue(brainDir: string, drafts: MemoryDrafts): 
   const previousById = new Map(previous.map((item) => [item.id, item]));
   const now = new Date().toISOString();
   const nextDrafts = [
-    ...drafts.identity.map((text) => queueItemDraft("identity", join(brainDir, "00-Identity", "Extracted Profile.md"), text, now)),
-    ...drafts.preferences.map((text) => queueItemDraft("preferences", join(brainDir, "04-Preferences", "Extracted Preferences.md"), text, now)),
-    ...drafts.projects.map((text) => queueItemDraft("projects", join(brainDir, "01-Projects", "Extracted Projects.md"), text, now)),
-    ...drafts.decisions.map((text) => queueItemDraft("decisions", join(brainDir, "03-Decisions", "Extracted Decisions.md"), text, now)),
-    ...drafts.goals.map((text) => queueItemDraft("goals", join(brainDir, "05-Goals", "Extracted Goals.md"), text, now)),
-    ...drafts.people.map((text) => queueItemDraft("people", join(brainDir, "02-People", "Extracted People.md"), text, now)),
-    ...drafts.workflows.map((text) => queueItemDraft("workflows", join(brainDir, "09-System", "Extracted Workflows.md"), text, now))
+    ...drafts.identity.map((item) => queueItemDraft("identity", join(brainDir, "00-Identity", "Extracted Profile.md"), item, now)),
+    ...drafts.preferences.map((item) => queueItemDraft("preferences", join(brainDir, "04-Preferences", "Extracted Preferences.md"), item, now)),
+    ...drafts.projects.map((item) => queueItemDraft("projects", join(brainDir, "01-Projects", "Extracted Projects.md"), item, now)),
+    ...drafts.decisions.map((item) => queueItemDraft("decisions", join(brainDir, "03-Decisions", "Extracted Decisions.md"), item, now)),
+    ...drafts.goals.map((item) => queueItemDraft("goals", join(brainDir, "05-Goals", "Extracted Goals.md"), item, now)),
+    ...drafts.people.map((item) => queueItemDraft("people", join(brainDir, "02-People", "Extracted People.md"), item, now)),
+    ...drafts.workflows.map((item) => queueItemDraft("workflows", join(brainDir, "09-System", "Extracted Workflows.md"), item, now))
   ];
   const merged = nextDrafts.map((item) => {
     const existing = previousById.get(item.id);
-    return existing ? { ...item, status: existing.status, createdAt: existing.createdAt, updatedAt: existing.updatedAt } : item;
+    return existing ? { ...item, status: existing.status, createdAt: existing.createdAt, updatedAt: existing.updatedAt, lastConfirmedAt: existing.lastConfirmedAt } : item;
   });
   await writeReviewQueue(paths.reviewQueuePath, merged);
+  await writeMemoryIndex(paths.memoryIndexPath, merged);
 }
 
-function queueItemDraft(section: string, file: string, text: string, now: string): MemoryReviewItem {
+function queueItemDraft(section: string, file: string, draft: MemoryDraftCandidate, now: string): MemoryReviewItem {
   return {
-    id: memoryReviewId(section, text),
+    id: memoryReviewId(section, draft.text),
     section,
     file,
-    text,
+    text: draft.text,
+    memoryType: draft.type,
+    sourceFile: draft.sourceRef.sourceFile,
+    conversationTitle: draft.sourceRef.conversationTitle,
+    sourceCitation: draft.sourceRef.citation,
+    evidence: draft.sourceRef.excerpt,
+    sourceRefs: [draft.sourceRef],
+    entities: draft.entities,
+    observedAt: draft.observedAt,
     status: "pending",
     createdAt: now,
     updatedAt: now,
@@ -949,13 +1147,54 @@ function isMemoryReviewItem(value: unknown): value is MemoryReviewItem {
     && typeof item.section === "string"
     && typeof item.file === "string"
     && typeof item.text === "string"
-    && (item.status === "pending" || item.status === "approved" || item.status === "rejected");
+    && (item.status === "pending" || item.status === "approved" || item.status === "rejected" || item.status === "outdated");
 }
 
 async function writeReviewQueue(pathLike: string, items: MemoryReviewItem[]): Promise<void> {
   await ensureDir(dirname(pathLike));
   await backupFile(pathLike);
   await writeFile(pathLike, JSON.stringify(items, null, 2) + "\n", "utf8");
+}
+
+async function writeMemoryIndex(pathLike: string, items: MemoryReviewItem[]): Promise<void> {
+  const records = items.map(memoryRecordFromReviewItem);
+  await writeJsonl(pathLike, records);
+}
+
+function memoryRecordFromReviewItem(item: MemoryReviewItem): MemoryRecord {
+  const type = normalizeMemoryType(item.memoryType ?? item.section);
+  const now = item.updatedAt || item.createdAt;
+  return {
+    id: item.id,
+    type,
+    text: item.text,
+    status: item.status,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    observedAt: item.observedAt ?? item.createdAt,
+    lastConfirmedAt: item.lastConfirmedAt,
+    sourceRefs: item.sourceRefs?.length ? item.sourceRefs : [{
+      chunkId: "unknown",
+      sourceFile: item.sourceFile ?? item.file,
+      conversationTitle: item.conversationTitle ?? "Unknown conversation",
+      role: "unknown",
+      excerpt: item.evidence ?? item.text,
+      citation: item.sourceCitation ?? item.file
+    }],
+    entities: item.entities ?? extractEntities(item.text)
+  };
+}
+
+function normalizeMemoryType(value: string): MemoryType {
+  const normalized = value.toLowerCase().replace(/s$/, "");
+  if (normalized === "preference") return "preference";
+  if (normalized === "identity") return "identity";
+  if (normalized === "decision") return "decision";
+  if (normalized === "project") return "project";
+  if (normalized === "goal") return "goal";
+  if (normalized === "person" || normalized === "people") return "person";
+  if (normalized === "workflow") return "workflow";
+  return "project";
 }
 
 export async function saveMemory(brainDir: string | undefined, section: string, title: string, content: string): Promise<string> {
@@ -980,13 +1219,15 @@ export async function reviewDraftMemories(options: ReviewOptions = {}): Promise<
   const queue = await readReviewQueue(paths.reviewQueuePath);
   const approveIds = new Set(options.approve ?? []);
   const rejectIds = new Set(options.reject ?? []);
-  if (!options.approveAll && approveIds.size === 0 && rejectIds.size === 0) {
+  const outdateIds = new Set(options.outdate ?? []);
+  if (!options.approveAll && approveIds.size === 0 && rejectIds.size === 0 && outdateIds.size === 0) {
     return {
       action: "list",
       count: queue.length,
       pending: queue.filter((item) => item.status === "pending").length,
       approved: queue.filter((item) => item.status === "approved").length,
       rejected: queue.filter((item) => item.status === "rejected").length,
+      outdated: queue.filter((item) => item.status === "outdated").length,
       items: queue
     };
   }
@@ -994,31 +1235,40 @@ export async function reviewDraftMemories(options: ReviewOptions = {}): Promise<
   const now = new Date().toISOString();
   const toApprove = new Set<string>();
   const toReject = new Set<string>();
+  const toOutdate = new Set<string>();
   for (const item of queue) {
     if (options.approveAll && item.status === "pending") toApprove.add(item.id);
     if (approveIds.has(item.id)) toApprove.add(item.id);
     if (rejectIds.has(item.id)) toReject.add(item.id);
+    if (outdateIds.has(item.id)) toOutdate.add(item.id);
   }
   for (const id of toReject) toApprove.delete(id);
+  for (const id of toOutdate) {
+    toApprove.delete(id);
+    toReject.delete(id);
+  }
 
   const knownIds = new Set(queue.map((item) => item.id));
   const unknownApprove = [...approveIds].filter((id) => !knownIds.has(id));
   const unknownReject = [...rejectIds].filter((id) => !knownIds.has(id));
-  if (unknownApprove.length > 0 || unknownReject.length > 0) {
-    throw new Error(`Unknown review id(s): ${[...unknownApprove, ...unknownReject].join(", ")}`);
+  const unknownOutdate = [...outdateIds].filter((id) => !knownIds.has(id));
+  if (unknownApprove.length > 0 || unknownReject.length > 0 || unknownOutdate.length > 0) {
+    throw new Error(`Unknown review id(s): ${[...unknownApprove, ...unknownReject, ...unknownOutdate].join(", ")}`);
   }
 
   const newlyApproved: MemoryReviewItem[] = [];
   const updated = queue.map((item) => {
     if (toApprove.has(item.id)) {
-      const next = { ...item, status: "approved" as const, updatedAt: now };
+      const next = { ...item, status: "approved" as const, updatedAt: now, lastConfirmedAt: now };
       if (item.status !== "approved") newlyApproved.push(next);
       return next;
     }
     if (toReject.has(item.id)) return { ...item, status: "rejected" as const, updatedAt: now };
+    if (toOutdate.has(item.id)) return { ...item, status: "outdated" as const, updatedAt: now };
     return item;
   });
   await writeReviewQueue(paths.reviewQueuePath, updated);
+  await writeMemoryIndex(paths.memoryIndexPath, updated);
 
   const reviewedPath = join(paths.brainDir, "09-System", "Reviewed Memories.md");
   if (newlyApproved.length > 0) {
@@ -1031,8 +1281,10 @@ export async function reviewDraftMemories(options: ReviewOptions = {}): Promise<
     action: options.approveAll ? "approve-all" : "update",
     approved: toApprove.size,
     rejected: toReject.size,
+    outdated: toOutdate.size,
     reviewedPath,
-    queuePath: paths.reviewQueuePath
+    queuePath: paths.reviewQueuePath,
+    memoryIndexPath: paths.memoryIndexPath
   };
 }
 

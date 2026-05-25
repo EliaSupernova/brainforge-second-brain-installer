@@ -17,7 +17,8 @@ Chat exports
   -> local embeddings (Ollama /api/embed when available, deterministic hash fallback otherwise)
   -> JSONL vector index
   -> draft Markdown memories
-  -> MCP search/read/save tools
+  -> source-backed memory records
+  -> MCP search/read/save/review tools
   -> tracked company tasks and structured handoffs for long multi-agent work
 ```
 
@@ -25,9 +26,11 @@ Chat exports
 
 - Raw exports stay in the imports folder.
 - Generated memories are drafts until reviewed.
+- Every extracted memory should carry a source reference with chunk ID, source file, conversation title, role, excerpt, and citation.
 - Re-import backs up existing generated draft files before replacing them.
 - Re-import preserves review status for stable memory IDs when the same extracted memory appears again.
 - Reviewed memories append to `09-System/Reviewed Memories.md` rather than overwriting earlier approvals.
+- Outdated memories remain inspectable but are excluded from default source-backed search.
 - Config edits require explicit `--configure`.
 - Backups are written before config edits.
 - Path traversal is blocked when reading memories through MCP.
@@ -42,9 +45,33 @@ BrainForge has provider modes:
 
 The active provider, model, dimensions, and fallback reason are written to `08-Indexes/manifest.json`.
 
-## Review Queue
+## Source-Backed Memory Index
 
-Extracted memories receive stable IDs derived from their section and text. Review state lives in `08-Indexes/memory-review-queue.json` with `pending`, `approved`, and `rejected` statuses. Approved memories are appended to `09-System/Reviewed Memories.md` for human-readable agent recall.
+Extracted memories receive stable IDs derived from their section and text.
+Review state lives in `08-Indexes/memory-review-queue.json`.
+
+The machine-readable memory contract lives in `08-Indexes/memories.jsonl`.
+Each record contains:
+
+- `id`
+- `type`: `identity`, `preference`, `decision`, `project`, `goal`, `person`, or `workflow`
+- `status`: `pending`, `approved`, `rejected`, or `outdated`
+- `text`
+- `sourceRefs[]` with chunk ID, source file, role, excerpt, and citation
+- `entities[]`
+- `createdAt`, `updatedAt`, `observedAt`, and optional `lastConfirmedAt`
+
+Approved memories are appended to `09-System/Reviewed Memories.md` for
+human-readable agent recall. MCP clients should prefer `approved` source-backed
+memory and should label `pending` or `outdated` memory if the user explicitly
+requests it.
+
+## Hybrid Search
+
+Chunk search combines vector similarity with keyword and entity overlap.
+Source-backed memory search combines memory text, entities, and source excerpts
+with type/status filters. This is intentionally lightweight in the local MVP
+and keeps the default setup free of hosted services or database requirements.
 
 ## Company Task Runtime
 

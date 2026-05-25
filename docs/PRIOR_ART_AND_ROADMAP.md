@@ -138,13 +138,21 @@ The best sentence:
 
 ## Suggested Roadmap
 
+### Completed First Architecture Slice
+
+- Added chunk-level source citations, memory type hints, entities, and keywords.
+- Added `08-Indexes/memories.jsonl` as the canonical source-backed memory index.
+- Added review status support for `outdated` memory.
+- Added source-backed memory search with type/status filters for CLI and MCP.
+- Kept the implementation clean-room: this adapts patterns from prior art
+  without copying code from AGPL or custom-licensed projects.
+
 ### v0.2: Better Memory Quality
 
-- Add hybrid retrieval: embeddings plus keyword scoring.
-- Add entity extraction for people, projects, repos, apps, companies, and files.
-- Add source citations for every draft memory.
-- Add memory type classification.
-- Add "current vs stale" fields to reviewed memories.
+- Improve hybrid retrieval quality with better scoring fixtures.
+- Improve entity extraction for people, projects, repos, apps, companies, and files.
+- Add source citation rendering to the review UX.
+- Add contradiction and supersession handling for stale memories.
 - Add tests that prove bad or outdated memories can be rejected.
 
 ### v0.3: Better User Review

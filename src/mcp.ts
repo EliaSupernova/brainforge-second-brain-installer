@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, importExports, listCompanyTasks, orchestrationProtocol, readMemory, reviewDraftMemories, saveMemory, searchBrain, startCompanyTask } from "./core.js";
+import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, importExports, listCompanyTasks, orchestrationProtocol, readMemory, reviewDraftMemories, saveMemory, searchBrain, searchMemories, startCompanyTask } from "./core.js";
 
 export async function runMcpServer(brainDir?: string): Promise<void> {
   const server = new McpServer({
@@ -15,16 +15,37 @@ export async function runMcpServer(brainDir?: string): Promise<void> {
     {
       query: z.string(),
       limit: z.number().int().min(1).max(20).optional(),
+      type: z.enum(["identity", "preference", "decision", "project", "goal", "person", "workflow"]).optional(),
+      status: z.enum(["pending", "approved", "rejected", "outdated"]).optional(),
+      sourceBacked: z.boolean().optional(),
       embeddingModel: z.string().optional(),
       ollamaUrl: z.string().optional()
     },
-    async ({ query, limit, embeddingModel, ollamaUrl }) => {
+    async ({ query, limit, type, status, sourceBacked, embeddingModel, ollamaUrl }) => {
+      if (sourceBacked || type || status) {
+        const memoryResults = await searchMemories(query, brainDir, limit ?? 5, { type, status });
+        return textResult(memoryResults.map((result) => ({
+          id: result.memory.id,
+          score: result.score,
+          type: result.memory.type,
+          status: result.memory.status,
+          text: result.memory.text,
+          sources: result.matchedSourceRefs,
+          why: result.why
+        })));
+      }
       const results = await searchBrain(query, brainDir, limit ?? 5, { model: embeddingModel, ollamaUrl });
       return textResult(results.map((result) => ({
         score: result.score,
+        vectorScore: result.vectorScore,
+        keywordScore: result.keywordScore,
+        entityScore: result.entityScore,
         sourceFile: result.chunk.sourceFile,
         conversationTitle: result.chunk.conversationTitle,
         role: result.chunk.role,
+        citation: result.chunk.sourceCitation,
+        memoryTypes: result.chunk.memoryTypes,
+        entities: result.chunk.entities,
         text: result.chunk.text
       })));
     }
@@ -84,9 +105,10 @@ export async function runMcpServer(brainDir?: string): Promise<void> {
     {
       approveAll: z.boolean().optional(),
       approve: z.array(z.string()).optional(),
-      reject: z.array(z.string()).optional()
+      reject: z.array(z.string()).optional(),
+      outdate: z.array(z.string()).optional()
     },
-    async ({ approveAll, approve, reject }) => textResult(await reviewDraftMemories({ brainDir, approveAll: Boolean(approveAll), approve, reject }))
+    async ({ approveAll, approve, reject, outdate }) => textResult(await reviewDraftMemories({ brainDir, approveAll: Boolean(approveAll), approve, reject, outdate }))
   );
 
   server.tool(
