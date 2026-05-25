@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, importExports, listCompanyTasks, orchestrationProtocol, reviewDraftMemories, searchBrain, setupBrain, startCompanyTask } from "./core.js";
+import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, importExports, installPlugin, listCompanyTasks, orchestrationProtocol, pluginInfo, reviewDraftMemories, searchBrain, setupBrain, startCompanyTask } from "./core.js";
 import { runMcpServer } from "./mcp.js";
 
 interface ParsedArgs {
@@ -92,6 +92,9 @@ async function main(): Promise<void> {
       case "company":
         await handleCompanyCommand(args);
         break;
+      case "plugin":
+        await handlePluginCommand(args);
+        break;
       case "mcp":
         await runMcpServer(stringFlag(args, "brain-dir"));
         break;
@@ -105,6 +108,24 @@ async function main(): Promise<void> {
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
+  }
+}
+
+async function handlePluginCommand(args: ParsedArgs): Promise<void> {
+  const action = args.positionals[0] ?? "info";
+  switch (action) {
+    case "info":
+      await outputResult(pluginInfo(stringFlag(args, "brain-dir")), Boolean(args.flags.json));
+      break;
+    case "install":
+      await outputResult(await installPlugin({
+        brainDir: stringFlag(args, "brain-dir"),
+        importsDir: stringFlag(args, "imports-dir"),
+        yes: Boolean(args.flags.yes)
+      }), Boolean(args.flags.json));
+      break;
+    default:
+      throw new Error(`Unknown plugin command: ${action}`);
   }
 }
 
@@ -234,6 +255,8 @@ Commands:
   brainforge company status [--task TASK_ID] [--brain-dir PATH] [--json]
   brainforge company list [--brain-dir PATH] [--json]
   brainforge company advance [--task TASK_ID] --summary TEXT [--evidence TEXT] [--next TEXT] [--questions TEXT] [--brain-dir PATH] [--json]
+  brainforge plugin info [--brain-dir PATH] [--json]
+  brainforge plugin install [--brain-dir PATH] [--imports-dir PATH] [--yes] [--json]
   brainforge mcp [--brain-dir PATH]
 `);
 }

@@ -25,6 +25,7 @@ BrainForge processes private chat exports and writes local memory files. The big
 | --- | --- |
 | Raw exports deleted or overwritten | BrainForge never deletes raw imports. |
 | Existing config damaged | `setup --configure` is explicit and backs up files first. |
+| Plugin install hides config edits | `plugin install` uses the same backup-first config path and prompts unless `--yes` is passed. |
 | Draft extraction becomes trusted memory | Draft files are labeled unreviewed; review queue promotes memories only after approval. |
 | Path traversal through MCP read/write | Memory read/write resolves paths and refuses targets outside the AI-Brain folder. |
 | Prompt injection inside imported chats | Imported text is treated as evidence, not instructions. Agents should prefer reviewed memory. |

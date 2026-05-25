@@ -21,6 +21,7 @@ This repository contains a working MVP skeleton:
 - Starts and advances tracked company tasks with current owner state, phase packets, and handoff links.
 - Writes structured phase handoffs so Claude Code and Codex can handle long work without dragging the entire transcript through every context window.
 - Provides safe Claude Code and Codex adapter writers behind explicit approval flags.
+- Provides `brainforge plugin info` and `brainforge plugin install` for plugin-style discovery and adapter setup.
 - Recommends Obsidian plugins without silently changing an existing Obsidian install.
 
 ## Install From Source
@@ -48,10 +49,16 @@ By default BrainForge does not edit Claude or Codex configs. To create backups a
 brainforge setup --configure
 ```
 
+Or use the plugin-style install command:
+
+```bash
+brainforge plugin install
+```
+
 For non-interactive setup:
 
 ```bash
-brainforge setup --configure --yes
+brainforge plugin install --yes
 ```
 
 ## User Flow
@@ -79,6 +86,8 @@ brainforge company start --objective TEXT [--title TEXT] [--brain-dir PATH] [--j
 brainforge company status [--task TASK_ID] [--brain-dir PATH] [--json]
 brainforge company list [--brain-dir PATH] [--json]
 brainforge company advance [--task TASK_ID] --summary TEXT [--evidence TEXT] [--next TEXT] [--questions TEXT] [--brain-dir PATH] [--json]
+brainforge plugin info [--brain-dir PATH] [--json]
+brainforge plugin install [--brain-dir PATH] [--imports-dir PATH] [--yes] [--json]
 brainforge mcp [--brain-dir PATH]
 ```
 
@@ -133,6 +142,15 @@ BrainForge follows the native extension points:
 - Codex: `AGENTS.md`, `~/.codex/config.toml`, and MCP.
 - Obsidian: normal Markdown vault files plus recommended community plugins.
 
+Plugin helper:
+
+```bash
+brainforge plugin info
+brainforge plugin install
+```
+
+`plugin info` prints the packaged plugin files under `plugins/brainforge/` and the MCP config shape. `plugin install` creates the vault and, after approval, backs up and writes the Claude Code/Codex adapters.
+
 ## Safety
 
 BrainForge is intentionally conservative:
@@ -166,5 +184,5 @@ This runs type checking, fixture tests, smoke setup/import/search/review/company
 - Add retrieval-quality fixtures comparing Ollama models against the hash fallback.
 - Add a richer review UI for approving individual extracted memories.
 - Add robust importers for full ChatGPT and Claude export formats.
-- Add one-command plugin installation for Claude Code and Codex when their plugin formats stabilize.
+- Add real-client plugin validation recipes for each Claude Code and Codex release line.
 - Add end-to-end MCP integration tests with Claude/Codex clients.

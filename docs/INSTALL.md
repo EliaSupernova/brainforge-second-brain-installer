@@ -60,10 +60,22 @@ BrainForge does not edit global configs by default. To back up and configure Cla
 brainforge setup --configure
 ```
 
+The friendlier plugin-style alias does the same safe setup:
+
+```bash
+brainforge plugin install
+```
+
 For unattended local testing only:
 
 ```bash
-brainforge setup --configure --yes
+brainforge plugin install --yes
+```
+
+To inspect the packaged local plugin bundle without editing config:
+
+```bash
+brainforge plugin info
 ```
 
 ## Stronger Local Embeddings

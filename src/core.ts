@@ -3,6 +3,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import {
   access,
   appendFile,
@@ -36,6 +37,8 @@ export interface SetupOptions {
   configure?: boolean;
   yes?: boolean;
 }
+
+export interface PluginInstallOptions extends SetupOptions {}
 
 export interface ImportOptions {
   brainDir?: string;
@@ -349,6 +352,62 @@ export async function setupBrain(options: SetupOptions = {}): Promise<Record<str
       `Put AI exports into ${paths.importsDir}`,
       "Run: brainforge import",
       "Run: brainforge doctor"
+    ]
+  };
+}
+
+export async function installPlugin(options: PluginInstallOptions = {}): Promise<Record<string, unknown>> {
+  const result = await setupBrain({ ...options, configure: true });
+  return {
+    status: "success",
+    summary: "BrainForge plugin-style adapter install finished. Claude Code and Codex can use the shared AI-Brain through MCP when config edits were approved.",
+    setup: result,
+    plugin: pluginInfo(options.brainDir),
+    next_actions: [
+      "Restart Claude Code and Codex so they reload MCP configuration.",
+      "Put AI exports into the imports folder.",
+      "Run: brainforge import",
+      "Run: brainforge doctor"
+    ]
+  };
+}
+
+export function pluginInfo(brainDir?: string): Record<string, unknown> {
+  const paths = brainPaths(brainDir);
+  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const pluginDir = join(packageRoot, "plugins", "brainforge");
+  const mcpConfig = {
+    mcpServers: {
+      brainforge: {
+        command: "brainforge",
+        args: ["mcp", "--brain-dir", paths.brainDir]
+      }
+    }
+  };
+  return {
+    status: "success",
+    summary: "BrainForge ships a plugin-style bundle plus MCP adapter config for Claude Code and Codex.",
+    pluginDir,
+    codexPluginManifest: join(pluginDir, ".codex-plugin", "plugin.json"),
+    mcpManifest: join(pluginDir, ".mcp.json"),
+    skillsDir: join(pluginDir, "skills"),
+    agentsDir: join(pluginDir, "agents"),
+    mcpConfig,
+    install_commands: [
+      "brainforge plugin install",
+      "brainforge setup --configure"
+    ],
+    safe_notes: [
+      "Install commands ask before editing config unless --yes is passed.",
+      "Existing Claude Code and Codex config files are backed up before edits.",
+      "The plugin bundle is plain files under plugins/brainforge for tools that support local plugin loading."
+    ],
+    artifacts: [
+      pluginDir,
+      join(pluginDir, ".codex-plugin", "plugin.json"),
+      join(pluginDir, ".mcp.json"),
+      join(pluginDir, "skills"),
+      join(pluginDir, "agents")
     ]
   };
 }

@@ -22,6 +22,7 @@ Please include:
 
 - BrainForge does not delete raw imports.
 - BrainForge does not edit global Claude Code or Codex configuration unless `setup --configure` is used.
+- `brainforge plugin install` uses the same explicit, backup-first adapter path.
 - BrainForge backs up existing config files before editing them.
 - BrainForge labels extracted memories as draft until reviewed.
 - BrainForge blocks MCP memory reads and writes outside the configured AI-Brain folder.

@@ -6,6 +6,7 @@ This audit maps the requested product requirements to current repository evidenc
 
 - GitHub-downloadable package shape: `package.json`, `README.md`, `docs/INSTALL.md`, `.github/workflows/ci.yml`, and `docs/GITHUB_PUBLISHING.md`.
 - Claude Code/Codex plugin-style bundle: `plugins/brainforge/.codex-plugin/plugin.json`, `plugins/brainforge/.mcp.json`, role prompts, and skills.
+- Plugin helper: `brainforge plugin info` and `brainforge plugin install`.
 - Local AI-Brain vault setup: `brainforge setup`.
 - Imports folder instructions: generated `PUT_EXPORTS_HERE.txt` and vault README.
 - Chat export parsing: ChatGPT-style JSON, Claude-style JSON, Codex JSONL, Markdown, and text fixtures.

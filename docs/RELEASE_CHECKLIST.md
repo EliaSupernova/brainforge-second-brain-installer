@@ -30,6 +30,8 @@ Use this before publishing BrainForge from GitHub or npm.
 - `brainforge company start` creates a tracked task folder with `company-task.json`, `README.md`, and the first phase packet.
 - `brainforge company status` reports the current phase owner.
 - `brainforge company advance` writes a handoff and moves to the next phase.
+- `brainforge plugin info` reports plugin bundle paths and MCP config.
+- `brainforge plugin install --yes` works in a fake-home test without duplicating config blocks.
 - `SECURITY.md`, `docs/THREAT_MODEL.md`, and `docs/COMPLETION_AUDIT.md` are current.
 
 ## Safety Review

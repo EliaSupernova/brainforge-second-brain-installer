@@ -83,6 +83,12 @@ assert.ok(savedMemoryPath.startsWith(`${brainDir}/`));
 assert.ok(existsSync(savedMemoryPath));
 await assert.rejects(() => core.readMemory(brainDir, "../outside.md"), /outside the brain directory/);
 
+const pluginInfo = runJson(["plugin", "info", "--brain-dir", brainDir, "--json"]);
+assert.equal(pluginInfo.status, "success");
+assert.equal(pluginInfo.mcpConfig.mcpServers.brainforge.command, "brainforge");
+assert.deepEqual(pluginInfo.mcpConfig.mcpServers.brainforge.args, ["mcp", "--brain-dir", brainDir]);
+assert.match(pluginInfo.codexPluginManifest, /plugins\/brainforge\/\.codex-plugin\/plugin\.json$/);
+
 const companyStart = runJson([
   "company",
   "start",
@@ -217,6 +223,9 @@ writeFileSync(join(fakeHome, ".claude", "CLAUDE.md"), "# Existing Claude Instruc
 
 runJson(["setup", "--brain-dir", brainDir, "--imports-dir", importsDir, "--configure", "--yes", "--json"], { HOME: fakeHome });
 runJson(["setup", "--brain-dir", brainDir, "--imports-dir", importsDir, "--configure", "--yes", "--json"], { HOME: fakeHome });
+const pluginInstall = runJson(["plugin", "install", "--brain-dir", brainDir, "--imports-dir", importsDir, "--yes", "--json"], { HOME: fakeHome });
+assert.equal(pluginInstall.status, "success");
+assert.equal(pluginInstall.plugin.mcpConfig.mcpServers.brainforge.command, "brainforge");
 
 const claudeConfig = JSON.parse(readFileSync(join(fakeHome, ".claude.json"), "utf8"));
 assert.equal(claudeConfig.mcpServers.existing.command, "existing-tool");

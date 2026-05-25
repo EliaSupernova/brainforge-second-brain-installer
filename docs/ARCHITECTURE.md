@@ -61,3 +61,10 @@ This is the part that makes the planner -> researcher -> architect -> builder ->
 - Claude Code: MCP plus `CLAUDE.md`.
 - Codex: MCP plus `AGENTS.md`.
 - Obsidian: plain Markdown vault plus recommended plugins.
+
+## Plugin Helper
+
+The package ships a local plugin-style bundle under `plugins/brainforge/` with a Codex plugin manifest, MCP manifest, skills, and role prompts.
+
+- `brainforge plugin info` prints bundle paths and ready-to-copy MCP configuration.
+- `brainforge plugin install` creates the vault and runs the backup-first Claude Code/Codex adapter setup.

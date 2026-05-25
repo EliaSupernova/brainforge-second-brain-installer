@@ -41,3 +41,4 @@ Add focused tests when changing:
 - Claude Code or Codex config writers.
 - Company task phase transitions.
 - Path or config safety boundaries.
+- Plugin helper commands.
