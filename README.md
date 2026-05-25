@@ -42,6 +42,7 @@ brainforge setup
 
 For GitHub clone instructions, see [docs/INSTALL.md](docs/INSTALL.md).
 For publishing your own repo, see [docs/GITHUB_PUBLISHING.md](docs/GITHUB_PUBLISHING.md).
+For prior-art research and the product roadmap, see [docs/PRIOR_ART_AND_ROADMAP.md](docs/PRIOR_ART_AND_ROADMAP.md).
 
 By default BrainForge does not edit Claude or Codex configs. To create backups and add adapters:
 
@@ -181,6 +182,7 @@ This runs type checking, fixture tests, smoke setup/import/search/review/company
 
 ## Recommended Next Milestones
 
+- Use the prior-art roadmap in [docs/PRIOR_ART_AND_ROADMAP.md](docs/PRIOR_ART_AND_ROADMAP.md) to guide the next product pass.
 - Add retrieval-quality fixtures comparing Ollama models against the hash fallback.
 - Add a richer review UI for approving individual extracted memories.
 - Add robust importers for full ChatGPT and Claude export formats.
