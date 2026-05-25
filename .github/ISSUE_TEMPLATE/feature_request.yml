@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What should BrainForge make easier?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: local_first
+    attributes:
+      label: Local-First And Safety Notes
+      description: Does this require network calls, account access, config edits, or raw export handling?

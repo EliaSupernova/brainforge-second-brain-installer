@@ -1,0 +1,241 @@
+#!/usr/bin/env node
+import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, importExports, listCompanyTasks, orchestrationProtocol, reviewDraftMemories, searchBrain, setupBrain, startCompanyTask } from "./core.js";
+import { runMcpServer } from "./mcp.js";
+
+interface ParsedArgs {
+  command: string;
+  positionals: string[];
+  flags: Record<string, string | boolean>;
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  try {
+    switch (args.command) {
+      case "setup":
+        await outputResult(await setupBrain({
+          brainDir: stringFlag(args, "brain-dir"),
+          importsDir: stringFlag(args, "imports-dir"),
+          configure: Boolean(args.flags.configure),
+          yes: Boolean(args.flags.yes)
+        }), Boolean(args.flags.json));
+        break;
+      case "import":
+        await outputResult(await importExports({
+          brainDir: stringFlag(args, "brain-dir"),
+          importsDir: stringFlag(args, "imports-dir"),
+          embeddingProvider: embeddingProviderFlag(args),
+          embeddingModel: stringFlag(args, "embedding-model"),
+          ollamaUrl: stringFlag(args, "ollama-url")
+        }), Boolean(args.flags.json));
+        break;
+      case "search": {
+        const query = args.positionals.join(" ").trim();
+        if (!query) throw new Error("Usage: brainforge search \"your query\"");
+        const results = await searchBrain(query, stringFlag(args, "brain-dir"), numberFlag(args, "limit") ?? 5, {
+          model: stringFlag(args, "embedding-model"),
+          ollamaUrl: stringFlag(args, "ollama-url")
+        });
+        await outputResult(results.map((result) => ({
+          score: result.score,
+          title: result.chunk.conversationTitle,
+          source: result.chunk.sourceFile,
+          text: result.chunk.text
+        })), Boolean(args.flags.json));
+        break;
+      }
+      case "doctor": {
+        const checks = await doctor(stringFlag(args, "brain-dir"));
+        if (args.flags.json) {
+          await outputResult(checks, true);
+        } else {
+          for (const check of checks) {
+            const symbol = check.status === "pass" ? "PASS" : check.status === "warn" ? "WARN" : "FAIL";
+            console.log(`${symbol} ${check.name}: ${check.message}`);
+          }
+          const failures = checks.filter((check) => check.status === "fail").length;
+          if (failures > 0) process.exitCode = 1;
+        }
+        if (args.flags.strict && checks.some((check) => check.status !== "pass")) {
+          process.exitCode = 1;
+        }
+        break;
+      }
+      case "review":
+        await outputResult(await reviewDraftMemories({
+          brainDir: stringFlag(args, "brain-dir"),
+          approveAll: Boolean(args.flags["approve-all"]),
+          approve: listFlag(args, "approve"),
+          reject: listFlag(args, "reject")
+        }), Boolean(args.flags.json));
+        break;
+      case "protocol":
+        await outputResult(orchestrationProtocol(), Boolean(args.flags.json));
+        break;
+      case "handoff": {
+        const phase = requiredFlag(args, "phase");
+        const fromAgent = requiredFlag(args, "from");
+        const toAgent = requiredFlag(args, "to");
+        const summary = requiredFlag(args, "summary");
+        const path = await createHandoff(stringFlag(args, "brain-dir"), {
+          phase,
+          fromAgent,
+          toAgent,
+          summary,
+          evidence: stringFlag(args, "evidence"),
+          nextSteps: stringFlag(args, "next"),
+          openQuestions: stringFlag(args, "questions")
+        });
+        await outputResult({ path }, Boolean(args.flags.json));
+        break;
+      }
+      case "company":
+        await handleCompanyCommand(args);
+        break;
+      case "mcp":
+        await runMcpServer(stringFlag(args, "brain-dir"));
+        break;
+      case "help":
+      case "":
+        printHelp();
+        break;
+      default:
+        throw new Error(`Unknown command: ${args.command}`);
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
+
+async function handleCompanyCommand(args: ParsedArgs): Promise<void> {
+  const action = args.positionals[0] ?? "status";
+  switch (action) {
+    case "start": {
+      const objective = stringFlag(args, "objective") ?? args.positionals.slice(1).join(" ").trim();
+      if (!objective) throw new Error("Usage: brainforge company start --objective \"what should the agent company do\"");
+      await outputResult(await startCompanyTask({
+        brainDir: stringFlag(args, "brain-dir"),
+        title: stringFlag(args, "title"),
+        objective
+      }), Boolean(args.flags.json));
+      break;
+    }
+    case "list":
+      await outputResult(await listCompanyTasks(stringFlag(args, "brain-dir")), Boolean(args.flags.json));
+      break;
+    case "status":
+      await outputResult(await getCompanyTask(stringFlag(args, "brain-dir"), stringFlag(args, "task")), Boolean(args.flags.json));
+      break;
+    case "advance": {
+      const summary = stringFlag(args, "summary") ?? args.positionals.slice(1).join(" ").trim();
+      if (!summary) throw new Error("Usage: brainforge company advance --task TASK_ID --summary \"what this phase completed\"");
+      await outputResult(await advanceCompanyTask({
+        brainDir: stringFlag(args, "brain-dir"),
+        taskId: stringFlag(args, "task"),
+        summary,
+        evidence: stringFlag(args, "evidence"),
+        nextSteps: stringFlag(args, "next"),
+        openQuestions: stringFlag(args, "questions")
+      }), Boolean(args.flags.json));
+      break;
+    }
+    default:
+      throw new Error(`Unknown company command: ${action}`);
+  }
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const [command = "", ...rest] = argv;
+  const flags: Record<string, string | boolean> = {};
+  const positionals: string[] = [];
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index];
+    if (arg.startsWith("--")) {
+      const withoutPrefix = arg.slice(2);
+      const [key, inlineValue] = withoutPrefix.split("=", 2);
+      if (inlineValue !== undefined) {
+        flags[key] = inlineValue;
+      } else if (rest[index + 1] && !rest[index + 1].startsWith("--")) {
+        flags[key] = rest[index + 1];
+        index += 1;
+      } else {
+        flags[key] = true;
+      }
+    } else {
+      positionals.push(arg);
+    }
+  }
+  return { command, positionals, flags };
+}
+
+function stringFlag(args: ParsedArgs, name: string): string | undefined {
+  const value = args.flags[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+function numberFlag(args: ParsedArgs, name: string): number | undefined {
+  const value = args.flags[name];
+  if (typeof value !== "string") return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function listFlag(args: ParsedArgs, name: string): string[] | undefined {
+  const value = stringFlag(args, name);
+  if (!value) return undefined;
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function requiredFlag(args: ParsedArgs, name: string): string {
+  const value = stringFlag(args, name);
+  if (!value) throw new Error(`Missing required --${name}`);
+  return value;
+}
+
+function embeddingProviderFlag(args: ParsedArgs): "auto" | "ollama" | "hash" | undefined {
+  const value = stringFlag(args, "embedding-provider");
+  if (value === undefined) return undefined;
+  if (value === "auto" || value === "ollama" || value === "hash") return value;
+  throw new Error("--embedding-provider must be one of: auto, ollama, hash");
+}
+
+async function outputResult(value: unknown, json: boolean): Promise<void> {
+  if (json) {
+    console.log(JSON.stringify(value, null, 2));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) console.log(JSON.stringify(item, null, 2));
+    return;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const [key, item] of Object.entries(record)) {
+      console.log(`${key}: ${Array.isArray(item) ? item.join(", ") : JSON.stringify(item)}`);
+    }
+    return;
+  }
+  console.log(String(value));
+}
+
+function printHelp(): void {
+  console.log(`BrainForge
+
+Commands:
+  brainforge setup [--brain-dir PATH] [--imports-dir PATH] [--configure] [--yes] [--json]
+  brainforge import [--brain-dir PATH] [--imports-dir PATH] [--embedding-provider auto|ollama|hash] [--embedding-model MODEL] [--ollama-url URL] [--json]
+  brainforge search "query" [--brain-dir PATH] [--limit 5] [--embedding-model MODEL] [--ollama-url URL] [--json]
+  brainforge doctor [--brain-dir PATH] [--strict] [--json]
+  brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--approve-all] [--json]
+  brainforge protocol [--json]
+  brainforge handoff --phase PHASE --from AGENT --to AGENT --summary TEXT [--brain-dir PATH] [--evidence TEXT] [--next TEXT] [--questions TEXT]
+  brainforge company start --objective TEXT [--title TEXT] [--brain-dir PATH] [--json]
+  brainforge company status [--task TASK_ID] [--brain-dir PATH] [--json]
+  brainforge company list [--brain-dir PATH] [--json]
+  brainforge company advance [--task TASK_ID] --summary TEXT [--evidence TEXT] [--next TEXT] [--questions TEXT] [--brain-dir PATH] [--json]
+  brainforge mcp [--brain-dir PATH]
+`);
+}
+
+main();

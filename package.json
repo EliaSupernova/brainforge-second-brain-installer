@@ -1,0 +1,48 @@
+{
+  "name": "brainforge-second-brain-installer",
+  "version": "0.1.0",
+  "description": "A local-first AI second brain installer for Claude Code, Codex, Obsidian, and MCP.",
+  "type": "module",
+  "bin": {
+    "brainforge": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "plugins",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "npm run build && node test/fixtures.test.mjs",
+    "prepare": "npm run build",
+    "smoke": "npm run build && node -e \"const fs=require('fs');fs.rmSync('tmp/smoke',{recursive:true,force:true});fs.mkdirSync('tmp/smoke/AI-Brain-Imports',{recursive:true});fs.writeFileSync('tmp/smoke/AI-Brain-Imports/conversations.json', JSON.stringify([{title:'Smoke Test',messages:[{role:'user',content:'My name is Smoke User. I prefer local privacy, backups before config edits, and plan research refined plan build test review improve release workflows. My goal is to make Claude and Codex share one AI-Brain.'},{role:'assistant',content:'Create an Obsidian vault, parse AI chat exports, embed chunks locally, and expose search through MCP.'}]}]));\" && node dist/cli.js setup --brain-dir ./tmp/smoke/AI-Brain --imports-dir ./tmp/smoke/AI-Brain-Imports --yes --json && node dist/cli.js company start --brain-dir ./tmp/smoke/AI-Brain --objective \"Ship BrainForge as a local AI engineering company\" --json && node dist/cli.js company advance --brain-dir ./tmp/smoke/AI-Brain --summary \"Smoke initial plan completed\" --evidence \"smoke script\" --json && node dist/cli.js company status --brain-dir ./tmp/smoke/AI-Brain --json && node dist/cli.js import --brain-dir ./tmp/smoke/AI-Brain --imports-dir ./tmp/smoke/AI-Brain-Imports --embedding-provider hash --json && node dist/cli.js search \"local privacy codex claude\" --brain-dir ./tmp/smoke/AI-Brain --json && node dist/cli.js review --brain-dir ./tmp/smoke/AI-Brain --approve-all --json && node dist/cli.js doctor --brain-dir ./tmp/smoke/AI-Brain --json",
+    "verify": "npm run check && npm test && npm run smoke && npm pack --dry-run"
+  },
+  "keywords": [
+    "ai",
+    "second-brain",
+    "mcp",
+    "codex",
+    "claude-code",
+    "obsidian",
+    "embeddings"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

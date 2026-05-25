@@ -1,0 +1,11 @@
+node_modules/
+dist/
+tmp/
+.DS_Store
+*.tgz
+.env
+.env.*
+.brainforge/
+AI-Brain/
+BrainForge-Imports/
+*BrainForge-Imports*/

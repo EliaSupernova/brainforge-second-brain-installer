@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "brainforge": {
+      "command": "brainforge",
+      "args": ["mcp"]
+    }
+  }
+}

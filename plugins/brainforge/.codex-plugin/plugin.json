@@ -1,0 +1,12 @@
+{
+  "name": "brainforge",
+  "version": "0.1.0",
+  "displayName": "BrainForge",
+  "description": "Connect Codex to a local AI-Brain vault and tracked multi-agent company workflow generated from AI chat exports.",
+  "publisher": "brainforge",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brainforge/brainforge"
+  }
+}
