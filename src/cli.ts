@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, importExports, installPlugin, listCompanyTasks, orchestrationProtocol, pluginInfo, reviewDraftMemories, searchBrain, searchMemories, setupBrain, startCompanyTask, type MemoryReviewStatus, type MemoryType } from "./core.js";
+import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, getRelatedMemories, importExports, installPlugin, listCompanyTasks, orchestrationProtocol, pluginInfo, rebuildMemoryMap, reviewDraftMemories, searchBrain, searchMemories, setupBrain, startCompanyTask, type MemoryReviewStatus, type MemoryType } from "./core.js";
 import { runMcpServer } from "./mcp.js";
 
 interface ParsedArgs {
@@ -99,6 +99,14 @@ async function main(): Promise<void> {
           editText: stringFlag(args, "text")
         }), Boolean(args.flags.json));
         break;
+      case "map":
+        await outputResult(await rebuildMemoryMap(stringFlag(args, "brain-dir")), Boolean(args.flags.json));
+        break;
+      case "related": {
+        const memoryId = requiredFlag(args, "id");
+        await outputResult(await getRelatedMemories(stringFlag(args, "brain-dir"), memoryId, numberFlag(args, "limit") ?? 5), Boolean(args.flags.json));
+        break;
+      }
       case "protocol":
         await outputResult(orchestrationProtocol(), Boolean(args.flags.json));
         break;
@@ -293,6 +301,8 @@ Commands:
   brainforge search "query" [--brain-dir PATH] [--limit 5] [--source-backed] [--type identity|preference|decision|project|goal|person|workflow|open_loop] [--status pending|approved|rejected|outdated] [--embedding-model MODEL] [--ollama-url URL] [--json]
   brainforge doctor [--brain-dir PATH] [--strict] [--json]
   brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--outdate ID[,ID]] [--edit ID --text TEXT] [--approve-all] [--json]
+  brainforge map [--brain-dir PATH] [--json]
+  brainforge related --id MEMORY_ID [--brain-dir PATH] [--limit 5] [--json]
   brainforge protocol [--json]
   brainforge handoff --phase PHASE --from AGENT --to AGENT --summary TEXT [--brain-dir PATH] [--evidence TEXT] [--next TEXT] [--questions TEXT]
   brainforge company start --objective TEXT [--title TEXT] [--brain-dir PATH] [--json]

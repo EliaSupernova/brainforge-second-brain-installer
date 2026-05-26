@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
@@ -30,6 +30,9 @@ export interface BrainPaths {
   manifestPath: string;
   reviewQueuePath: string;
   memoryIndexPath: string;
+  memoryGraphPath: string;
+  relatedMemoriesPath: string;
+  dashboardsDir: string;
 }
 
 export interface SetupOptions {
@@ -142,6 +145,40 @@ export interface MemorySearchResult {
   memory: MemoryRecord;
   matchedSourceRefs: SourceRef[];
   why: string[];
+}
+
+export interface MemoryGraphNode {
+  id: string;
+  kind: "memory" | "entity" | "type";
+  label: string;
+  memoryType?: MemoryType;
+  status?: MemoryReviewStatus;
+  sourceRefs?: SourceRef[];
+}
+
+export interface MemoryGraphEdge {
+  from: string;
+  to: string;
+  kind: "has_type" | "mentions" | "related";
+  weight: number;
+  reasons?: string[];
+}
+
+export interface RelatedMemoryRecord {
+  id: string;
+  score: number;
+  reasons: string[];
+  type: MemoryType;
+  text: string;
+  sourceRefs: SourceRef[];
+}
+
+export interface RelatedMemoryResult {
+  id: string;
+  type: MemoryType;
+  text: string;
+  sourceRefs: SourceRef[];
+  related: RelatedMemoryRecord[];
 }
 
 export interface HandoffInput {
@@ -316,6 +353,7 @@ export function brainPaths(brainDir = DEFAULT_BRAIN_DIR, importsDir = DEFAULT_IM
   const resolvedImportsDir = resolve(expandHome(importsDir));
   const indexDir = join(resolvedBrainDir, "08-Indexes");
   const orchestrationDir = join(resolvedBrainDir, "10-Orchestration");
+  const dashboardsDir = join(resolvedBrainDir, "11-Dashboards");
   return {
     brainDir: resolvedBrainDir,
     importsDir: resolvedImportsDir,
@@ -326,7 +364,10 @@ export function brainPaths(brainDir = DEFAULT_BRAIN_DIR, importsDir = DEFAULT_IM
     vectorsPath: join(indexDir, "vectors.jsonl"),
     manifestPath: join(indexDir, "manifest.json"),
     reviewQueuePath: join(indexDir, "memory-review-queue.json"),
-    memoryIndexPath: join(indexDir, "memories.jsonl")
+    memoryIndexPath: join(indexDir, "memories.jsonl"),
+    memoryGraphPath: join(indexDir, "memory-graph.json"),
+    relatedMemoriesPath: join(indexDir, "related-memories.json"),
+    dashboardsDir
   };
 }
 
@@ -369,6 +410,7 @@ export async function setupBrain(options: SetupOptions = {}): Promise<Record<str
     "10-Orchestration/Research",
     "10-Orchestration/Reviews",
     "10-Orchestration/Tasks",
+    "11-Dashboards",
     ".obsidian"
   ];
 
@@ -508,6 +550,7 @@ export async function importExports(options: ImportOptions = {}): Promise<Record
 
   const memoryDrafts = extractMemoryDrafts(chunks);
   await writeExtractedMemories(paths.brainDir, memoryDrafts);
+  await rebuildMemoryMap(paths.brainDir);
 
   return {
     importsDir: paths.importsDir,
@@ -528,7 +571,10 @@ export async function importExports(options: ImportOptions = {}): Promise<Record
       join(paths.brainDir, "09-System", "Extracted Workflows.md"),
       join(paths.brainDir, "07-Open Loops", "Extracted Open Loops.md"),
       paths.reviewQueuePath,
-      paths.memoryIndexPath
+      paths.memoryIndexPath,
+      paths.memoryGraphPath,
+      paths.relatedMemoriesPath,
+      paths.dashboardsDir
     ]
   };
 }
@@ -953,6 +999,208 @@ function memoryRecencyScore(memory: MemoryRecord): number {
   return Number((1 / (1 + ageDays / 30)).toFixed(6));
 }
 
+export async function rebuildMemoryMap(brainDir?: string): Promise<Record<string, unknown>> {
+  const paths = brainPaths(brainDir);
+  const memories = await approvedMemories(paths);
+  const nodes = new Map<string, MemoryGraphNode>();
+  const edges: MemoryGraphEdge[] = [];
+  const related = memories.map((memory) => relatedMemoryResult(memory, memories, 5));
+
+  for (const memory of memories) {
+    const memoryNodeId = `memory:${memory.id}`;
+    nodes.set(memoryNodeId, {
+      id: memoryNodeId,
+      kind: "memory",
+      label: memory.text.slice(0, 120),
+      memoryType: memory.type,
+      status: memory.status,
+      sourceRefs: memory.sourceRefs.map(publicSourceRef)
+    });
+
+    const typeNodeId = `type:${memory.type}`;
+    nodes.set(typeNodeId, { id: typeNodeId, kind: "type", label: memory.type });
+    edges.push({ from: memoryNodeId, to: typeNodeId, kind: "has_type", weight: 1 });
+
+    for (const entity of memory.entities) {
+      const entityNodeId = `entity:${slugify(entity, "entity")}`;
+      nodes.set(entityNodeId, { id: entityNodeId, kind: "entity", label: entity });
+      edges.push({ from: memoryNodeId, to: entityNodeId, kind: "mentions", weight: 1 });
+    }
+  }
+
+  for (const item of related) {
+    for (const relatedItem of item.related) {
+      edges.push({
+        from: `memory:${item.id}`,
+        to: `memory:${relatedItem.id}`,
+        kind: "related",
+        weight: relatedItem.score,
+        reasons: relatedItem.reasons
+      });
+    }
+  }
+
+  const graph = {
+    generatedAt: new Date().toISOString(),
+    scope: "approved-memory-only",
+    nodes: [...nodes.values()],
+    edges
+  };
+  const relatedIndex = {
+    generatedAt: graph.generatedAt,
+    scope: "approved-memory-only",
+    related
+  };
+
+  await ensureDir(paths.indexDir);
+  await writeFile(paths.memoryGraphPath, JSON.stringify(graph, null, 2) + "\n", "utf8");
+  await writeFile(paths.relatedMemoriesPath, JSON.stringify(relatedIndex, null, 2) + "\n", "utf8");
+  await writeObsidianDashboards(paths, memories, related);
+
+  return {
+    status: "success",
+    scope: "approved-memory-only",
+    memories: memories.length,
+    nodes: graph.nodes.length,
+    edges: graph.edges.length,
+    graphPath: paths.memoryGraphPath,
+    relatedPath: paths.relatedMemoriesPath,
+    dashboardsDir: paths.dashboardsDir
+  };
+}
+
+export async function getRelatedMemories(brainDir: string | undefined, memoryId: string, limit = 5): Promise<RelatedMemoryResult> {
+  const paths = brainPaths(brainDir);
+  const memories = await approvedMemories(paths);
+  const memory = memories.find((item) => item.id === memoryId);
+  if (!memory) throw new Error(`Approved memory not found: ${memoryId}`);
+  return relatedMemoryResult(memory, memories, limit);
+}
+
+async function approvedMemories(paths: BrainPaths): Promise<MemoryRecord[]> {
+  return (await readJsonl<MemoryRecord>(paths.memoryIndexPath)).filter((memory) => memory.status === "approved");
+}
+
+function publicSourceRef(source: SourceRef): SourceRef {
+  return {
+    ...source,
+    sourceFile: basename(source.sourceFile),
+    citation: displayCitation(source)
+  };
+}
+
+function displayCitation(source: SourceRef): string {
+  return `${source.conversationTitle} (${source.role}) chunk ${source.chunkId.slice(0, 8)}`;
+}
+
+function relatedMemoryResult(memory: MemoryRecord, memories: MemoryRecord[], limit: number): RelatedMemoryResult {
+  return {
+    id: memory.id,
+    type: memory.type,
+    text: memory.text,
+    sourceRefs: memory.sourceRefs.map(publicSourceRef),
+    related: memories
+      .filter((candidate) => candidate.id !== memory.id)
+      .map((candidate) => relatedMemoryRecord(memory, candidate))
+      .filter((candidate) => candidate.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+  };
+}
+
+function relatedMemoryRecord(memory: MemoryRecord, candidate: MemoryRecord): RelatedMemoryRecord {
+  const reasons: string[] = [];
+  let score = 0;
+  if (memory.type === candidate.type) {
+    score += 0.35;
+    reasons.push(`same type: ${memory.type}`);
+  }
+  const sharedEntities = intersection(memory.entities.map((entity) => entity.toLowerCase()), candidate.entities.map((entity) => entity.toLowerCase()));
+  if (sharedEntities.length > 0) {
+    score += Math.min(0.35, sharedEntities.length * 0.12);
+    reasons.push(`shared entities: ${sharedEntities.slice(0, 5).join(", ")}`);
+  }
+  const sharedTerms = intersection(extractKeywords(memory.text), extractKeywords(candidate.text));
+  if (sharedTerms.length > 0) {
+    score += Math.min(0.3, sharedTerms.length * 0.06);
+    reasons.push(`shared terms: ${sharedTerms.slice(0, 5).join(", ")}`);
+  }
+  return {
+    id: candidate.id,
+    score: Number(score.toFixed(6)),
+    reasons,
+    type: candidate.type,
+    text: candidate.text,
+    sourceRefs: candidate.sourceRefs.map(publicSourceRef)
+  };
+}
+
+function intersection(left: string[], right: string[]): string[] {
+  const rightSet = new Set(right.map((item) => item.toLowerCase()));
+  return unique(left.map((item) => item.toLowerCase()).filter((item) => rightSet.has(item)), 20);
+}
+
+async function writeObsidianDashboards(paths: BrainPaths, memories: MemoryRecord[], related: RelatedMemoryResult[]): Promise<void> {
+  await ensureDir(paths.dashboardsDir);
+  await writeFile(join(paths.dashboardsDir, "Memory Dashboard.md"), memoryDashboardMarkdown(memories, related), "utf8");
+  await writeFile(join(paths.dashboardsDir, "Projects.md"), typedDashboardMarkdown("Projects", memories, "project"), "utf8");
+  await writeFile(join(paths.dashboardsDir, "People.md"), typedDashboardMarkdown("People", memories, "person"), "utf8");
+  await writeFile(join(paths.dashboardsDir, "Decisions.md"), typedDashboardMarkdown("Decisions", memories, "decision"), "utf8");
+  await writeFile(join(paths.dashboardsDir, "Open Loops.md"), typedDashboardMarkdown("Open Loops", memories, "open_loop"), "utf8");
+}
+
+function memoryDashboardMarkdown(memories: MemoryRecord[], related: RelatedMemoryResult[]): string {
+  const counts = companyMemoryTypes().map((type) => `- ${type}: ${memories.filter((memory) => memory.type === type).length}`).join("\n");
+  const recent = [...memories]
+    .sort((a, b) => Date.parse(b.lastConfirmedAt ?? b.updatedAt) - Date.parse(a.lastConfirmedAt ?? a.updatedAt))
+    .slice(0, 10)
+    .map((memory) => `- ${memory.id} [${memory.type}] ${memory.text}`)
+    .join("\n") || "- No approved memories yet.";
+  const relatedLines = related
+    .flatMap((item) => item.related.slice(0, 3).map((candidate) => `- ${item.id} -> ${candidate.id} (${candidate.score}): ${candidate.reasons.join("; ")}`))
+    .slice(0, 20)
+    .join("\n") || "- No related suggestions yet.";
+  return `# Memory Dashboard
+
+Scope: approved-memory-only.
+
+## Counts
+
+${counts}
+
+## Recent Approved Memory
+
+${recent}
+
+## Computed Related Memory Suggestions
+
+These are suggestions based on shared type, entities, and terms. They are not verified real-world relationships.
+
+${relatedLines}
+`;
+}
+
+function typedDashboardMarkdown(title: string, memories: MemoryRecord[], type: MemoryType): string {
+  const items = memories
+    .filter((memory) => memory.type === type)
+    .sort((a, b) => Date.parse(b.lastConfirmedAt ?? b.updatedAt) - Date.parse(a.lastConfirmedAt ?? a.updatedAt))
+    .map((memory) => {
+      const sources = memory.sourceRefs.slice(0, 3).map(displayCitation).join("; ");
+      return `- ${memory.id}: ${memory.text}${sources ? `\n  Sources: ${sources}` : ""}`;
+    })
+    .join("\n") || "- No approved memories yet.";
+  return `# ${title}
+
+Scope: approved-memory-only.
+
+${items}
+`;
+}
+
+function companyMemoryTypes(): MemoryType[] {
+  return ["identity", "preference", "decision", "project", "goal", "person", "workflow", "open_loop"];
+}
+
 async function embedQueryForIndex(query: string, manifest: IndexManifest | null, options: EmbeddingOptions): Promise<number[]> {
   const providerFromManifest = manifest?.embedding?.provider === "ollama" ? "ollama" : "hash";
   if (providerFromManifest === "ollama") {
@@ -1137,6 +1385,7 @@ async function updateMemoryReviewQueue(brainDir: string, drafts: MemoryDrafts): 
   });
   await writeReviewQueue(paths.reviewQueuePath, merged);
   await writeMemoryIndex(paths.memoryIndexPath, merged);
+  await rebuildMemoryMap(paths.brainDir);
 }
 
 function queueItemDraft(section: string, file: string, draft: MemoryDraftCandidate, now: string): MemoryReviewItem {
@@ -1322,6 +1571,7 @@ export async function reviewDraftMemories(options: ReviewOptions = {}): Promise<
   });
   await writeReviewQueue(paths.reviewQueuePath, updated);
   await writeMemoryIndex(paths.memoryIndexPath, updated);
+  await rebuildMemoryMap(paths.brainDir);
 
   const reviewedPath = join(paths.brainDir, "09-System", "Reviewed Memories.md");
   if (newlyApproved.length > 0) {
@@ -1903,6 +2153,8 @@ export async function doctor(brainDir?: string): Promise<DoctorCheck[]> {
   checks.push(await existsCheck("Vector index", paths.vectorsPath, "Vector index exists.", "Run brainforge import after adding exports."));
   checks.push(await embeddingManifestCheck(paths.manifestPath));
   checks.push(await memoryReviewCheck(paths.brainDir));
+  checks.push(await existsCheck("Memory graph", paths.memoryGraphPath, "Approved-memory graph exists.", "Run brainforge import, then approve selected memories or run brainforge map."));
+  checks.push(await existsCheck("Obsidian dashboards", join(paths.dashboardsDir, "Memory Dashboard.md"), "Generated Obsidian dashboards exist.", "Run brainforge map after reviewing memories."));
 
   const claudeConfigPath = join(homedir(), ".claude.json");
   const codexConfigPath = join(homedir(), ".codex", "config.toml");

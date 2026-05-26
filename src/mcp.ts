@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, importExports, listCompanyTasks, orchestrationProtocol, readMemory, reviewDraftMemories, saveMemory, searchBrain, searchMemories, startCompanyTask } from "./core.js";
+import { advanceCompanyTask, createHandoff, doctor, getCompanyTask, getRelatedMemories, importExports, listCompanyTasks, orchestrationProtocol, readMemory, rebuildMemoryMap, reviewDraftMemories, saveMemory, searchBrain, searchMemories, startCompanyTask } from "./core.js";
 
 export async function runMcpServer(brainDir?: string): Promise<void> {
   const server = new McpServer({
@@ -114,6 +114,23 @@ export async function runMcpServer(brainDir?: string): Promise<void> {
       editText: z.string().optional()
     },
     async ({ approveAll, approve, reject, outdate, editId, editText }) => textResult(await reviewDraftMemories({ brainDir, approveAll: Boolean(approveAll), approve, reject, outdate, editId, editText }))
+  );
+
+  server.tool(
+    "rebuild_memory_map",
+    "Rebuild the approved-memory graph, related-memory suggestions, and generated Obsidian dashboards.",
+    {},
+    async () => textResult(await rebuildMemoryMap(brainDir))
+  );
+
+  server.tool(
+    "get_related_memories",
+    "Get computed related-memory suggestions for one approved memory by ID.",
+    {
+      id: z.string(),
+      limit: z.number().int().min(1).max(20).optional()
+    },
+    async ({ id, limit }) => textResult(await getRelatedMemories(brainDir, id, limit ?? 5))
   );
 
   server.tool(

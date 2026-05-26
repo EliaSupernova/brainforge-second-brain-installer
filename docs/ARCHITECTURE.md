@@ -1,12 +1,13 @@
 # BrainForge Architecture
 
-BrainForge has five layers:
+BrainForge has six layers:
 
 1. **Vault generator**: creates a local Obsidian-compatible Markdown vault.
 2. **Import pipeline**: parses AI exports, chunks text, embeds chunks, and extracts draft memory.
-3. **MCP server**: exposes search/read/save/import/doctor tools to Claude Code and Codex.
-4. **Company task runtime**: tracks long work through phase packets, current owner state, and handoff links.
-5. **Adapters**: safely connect Claude Code and Codex to the same vault.
+3. **Memory map**: turns approved memories into graph JSON, related-memory suggestions, and Obsidian dashboards.
+4. **MCP server**: exposes search/read/save/import/doctor/map tools to Claude Code and Codex.
+5. **Company task runtime**: tracks long work through phase packets, current owner state, and handoff links.
+6. **Adapters**: safely connect Claude Code and Codex to the same vault.
 
 ## Data Flow
 
@@ -18,7 +19,8 @@ Chat exports
   -> JSONL vector index
   -> draft Markdown memories
   -> source-backed memory records
-  -> MCP search/read/save/review tools
+  -> approved-memory graph, related-memory suggestions, and Obsidian dashboards
+  -> MCP search/read/save/review/map tools
   -> tracked company tasks and structured handoffs for long multi-agent work
 ```
 
@@ -31,6 +33,7 @@ Chat exports
 - Re-import preserves review status for stable memory IDs when the same extracted memory appears again.
 - Reviewed memories append to `09-System/Reviewed Memories.md` rather than overwriting earlier approvals.
 - Outdated memories remain inspectable but are excluded from default source-backed search.
+- Graphs, related-memory suggestions, and dashboards are generated from approved memory only.
 - Config edits require explicit `--configure`.
 - Backups are written before config edits.
 - Path traversal is blocked when reading memories through MCP.
@@ -74,6 +77,36 @@ Source-backed memory search combines memory text, entities, source excerpts,
 and recency with type/status filters. Default source-backed search returns
 `approved` memory only. This is intentionally lightweight in the local MVP and
 keeps the default setup free of hosted services or database requirements.
+
+## Memory Graph And Dashboards
+
+`brainforge map` rebuilds approved-memory-only artifacts:
+
+- `08-Indexes/memory-graph.json`
+- `08-Indexes/related-memories.json`
+- `11-Dashboards/Memory Dashboard.md`
+- `11-Dashboards/Projects.md`
+- `11-Dashboards/People.md`
+- `11-Dashboards/Decisions.md`
+- `11-Dashboards/Open Loops.md`
+
+`memory-graph.json` has this contract:
+
+- `generatedAt`
+- `scope: "approved-memory-only"`
+- `nodes[]` with `kind: memory | entity | type`
+- `edges[]` with `kind: has_type | mentions | related`
+
+`related-memories.json` has this contract:
+
+- `generatedAt`
+- `scope: "approved-memory-only"`
+- `related[]` with source memory IDs, scored related records, and reasons
+
+Related-memory edges are computed suggestions based on shared type, entities,
+and terms. They are deliberately worded as suggestions rather than facts.
+Source references in graph output use display citations and source basenames so
+local import paths are not leaked into dashboards.
 
 ## Company Task Runtime
 

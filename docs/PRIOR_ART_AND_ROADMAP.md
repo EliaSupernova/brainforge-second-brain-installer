@@ -145,6 +145,7 @@ The best sentence:
 - Added review status support for `outdated` memory.
 - Added source-backed memory search with type/status filters for CLI and MCP.
 - Added editable memory review, `open_loop` memory, and recency-aware source-backed search.
+- Added approved-memory graph generation, related-memory suggestions, and Obsidian dashboard generation.
 - Kept the implementation clean-room: this adapts patterns from prior art
   without copying code from AGPL or custom-licensed projects.
 
@@ -166,7 +167,7 @@ The best sentence:
 
 ### v0.4: Obsidian Power Mode
 
-- Generate Obsidian dashboards for projects, people, decisions, and open loops.
+- Improve Obsidian dashboards for projects, people, decisions, and open loops.
 - Add recommended Smart Connections setup notes without depending on it.
 - Add Dataview-ready metadata.
 - Add backlinks from reviewed memories to source conversations.

@@ -16,7 +16,8 @@ This repository contains a working MVP skeleton:
 - Extracts typed draft memories into readable Markdown notes.
 - Writes a machine-readable `08-Indexes/memories.jsonl` memory index with source citations, memory types, entities, and review status.
 - Lets users review draft extracted memories and explicitly approve, edit, reject, or mark them outdated.
-- Exposes MCP tools for source-backed search, reading, saving, importing, review, and doctor checks.
+- Builds an approved-memory graph, related-memory suggestions, and Obsidian dashboards from reviewed memory only.
+- Exposes MCP tools for source-backed search, reading, saving, importing, review, memory maps, related memories, and doctor checks.
 - Adds a multi-agent orchestration protocol with planner, researcher, architect, builder, tester, security reviewer, docs/release engineer, and critic roles.
 - Generates scoped role prompts inside the vault so long tasks can be split across specialized agents.
 - Starts and advances tracked company tasks with current owner state, phase packets, and handoff links.
@@ -72,8 +73,9 @@ brainforge plugin install --yes
 4. Run `brainforge search "what projects matter to me right now"`.
 5. Run `brainforge review` to inspect draft memories.
 6. Run `brainforge review --approve-all` when you want to promote drafts into reviewed memory.
-7. Run `brainforge company start --objective "..."` when you want a full planner/researcher/architect/builder/tester/reviewer/release loop.
-8. Run `brainforge doctor` to verify the setup.
+7. Run `brainforge map` to rebuild approved-memory dashboards and related-memory suggestions.
+8. Run `brainforge company start --objective "..."` when you want a full planner/researcher/architect/builder/tester/reviewer/release loop.
+9. Run `brainforge doctor` to verify the setup.
 
 ## Commands
 
@@ -83,6 +85,8 @@ brainforge import [--brain-dir PATH] [--imports-dir PATH] [--embedding-provider 
 brainforge search "query" [--brain-dir PATH] [--limit 5] [--source-backed] [--type identity|preference|decision|project|goal|person|workflow|open_loop] [--status pending|approved|rejected|outdated]
 brainforge doctor [--brain-dir PATH] [--strict] [--json]
 brainforge review [--brain-dir PATH] [--approve ID[,ID]] [--reject ID[,ID]] [--outdate ID[,ID]] [--edit ID --text TEXT] [--approve-all] [--json]
+brainforge map [--brain-dir PATH] [--json]
+brainforge related --id MEMORY_ID [--brain-dir PATH] [--limit 5] [--json]
 brainforge protocol [--json]
 brainforge handoff --phase PHASE --from AGENT --to AGENT --summary TEXT [--brain-dir PATH]
 brainforge company start --objective TEXT [--title TEXT] [--brain-dir PATH] [--json]
@@ -151,6 +155,21 @@ source-backed search returns approved memory only; use `--status pending`,
 non-approved memory. This lets Claude Code and Codex answer from reviewed memory
 while still showing where the memory came from.
 
+Approved memory also generates:
+
+- `08-Indexes/memory-graph.json`
+- `08-Indexes/related-memories.json`
+- `11-Dashboards/Memory Dashboard.md`
+- `11-Dashboards/Projects.md`
+- `11-Dashboards/People.md`
+- `11-Dashboards/Decisions.md`
+- `11-Dashboards/Open Loops.md`
+
+The graph, related-memory index, and dashboards are generated from approved
+memory only. Related-memory results are computed suggestions based on shared
+type, entities, and terms; they are not treated as verified facts. Edit memory
+with `brainforge review --edit ...`, then rerun `brainforge map`.
+
 Examples:
 
 ```bash
@@ -158,6 +177,8 @@ brainforge search "backups before config edits" --source-backed --type preferenc
 brainforge search "follow up RBC" --source-backed --type open_loop --status pending
 brainforge review --edit abc123def456 --text "I prefer concise direct answers and verified backups before config edits."
 brainforge review --outdate abc123def456
+brainforge map
+brainforge related --id abc123def456
 ```
 
 ## Claude Code / Codex Design
@@ -189,6 +210,7 @@ BrainForge is intentionally conservative:
 - Extracted memories are labeled as draft/unreviewed.
 - Review state is tracked in `08-Indexes/memory-review-queue.json`.
 - Source-backed memory state is tracked in `08-Indexes/memories.jsonl`.
+- Memory graph, related-memory suggestions, and dashboards are generated from approved memory only.
 - Memory statuses include `pending`, `approved`, `rejected`, and `outdated`.
 - Reviewed memories are appended to `09-System/Reviewed Memories.md`; they are not silently overwritten.
 - Everything is local by default.

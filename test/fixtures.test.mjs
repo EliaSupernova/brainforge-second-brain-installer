@@ -9,9 +9,11 @@ const core = await import(join(root, "dist", "core.js"));
 const fixtureRoot = join(root, "tmp", "fixture-tests");
 const brainDir = join(fixtureRoot, "AI-Brain");
 const importsDir = join(fixtureRoot, "Imports");
+const testHome = join(fixtureRoot, "home-default");
 
 rmSync(fixtureRoot, { recursive: true, force: true });
 mkdirSync(importsDir, { recursive: true });
+mkdirSync(testHome, { recursive: true });
 
 writeFileSync(join(importsDir, "chatgpt-conversations.json"), JSON.stringify([
   {
@@ -163,6 +165,9 @@ assert.equal(imported.files, 3);
 assert.equal(imported.messages, 6);
 assert.equal(imported.embedding.provider, "brainforge-local-hash");
 assert.ok(imported.written.includes(join(brainDir, "08-Indexes", "memories.jsonl")));
+assert.ok(imported.written.includes(join(brainDir, "08-Indexes", "memory-graph.json")));
+assert.ok(imported.written.includes(join(brainDir, "08-Indexes", "related-memories.json")));
+assert.ok(existsSync(join(brainDir, "11-Dashboards", "Memory Dashboard.md")));
 
 const profile = readFileSync(join(brainDir, "00-Identity", "Extracted Profile.md"), "utf8");
 const preferences = readFileSync(join(brainDir, "04-Preferences", "Extracted Preferences.md"), "utf8");
@@ -171,6 +176,8 @@ const workflows = readFileSync(join(brainDir, "09-System", "Extracted Workflows.
 const openLoops = readFileSync(join(brainDir, "07-Open Loops", "Extracted Open Loops.md"), "utf8");
 const chunks = readJsonl(join(brainDir, "08-Indexes", "chunks.jsonl"));
 const memoryIndex = readJsonl(join(brainDir, "08-Indexes", "memories.jsonl"));
+const draftGraph = readJson(join(brainDir, "08-Indexes", "memory-graph.json"));
+const draftDashboard = readFileSync(join(brainDir, "11-Dashboards", "Memory Dashboard.md"), "utf8");
 
 assert.match(profile, /My name is Chat Example/);
 assert.match(preferences, /I prefer direct answers/);
@@ -183,6 +190,9 @@ assert.ok(memoryIndex.length >= 4);
 assert.ok(memoryIndex.some((memory) => memory.type === "open_loop"));
 assert.ok(memoryIndex.every((memory) => Array.isArray(memory.sourceRefs) && memory.sourceRefs.length >= 1));
 assert.ok(memoryIndex.every((memory) => memory.sourceRefs[0].chunkId && memory.sourceRefs[0].sourceFile && memory.sourceRefs[0].excerpt));
+assert.equal(draftGraph.scope, "approved-memory-only");
+assert.equal(draftGraph.nodes.length, 0);
+assert.doesNotMatch(draftDashboard, /follow up with RBC/);
 
 const search = runJson(["search", "reviewed memories local privacy", "--brain-dir", brainDir, "--json"]);
 assert.ok(Array.isArray(search));
@@ -238,6 +248,15 @@ assert.equal(afterSelected.items.find((item) => item.id === firstId)?.status, "a
 assert.equal(afterSelected.items.find((item) => item.id === secondId)?.status, "rejected");
 assert.ok(afterSelected.items.find((item) => item.id === firstId)?.sourceRefs?.[0]?.chunkId);
 
+const selectedGraph = readJson(join(brainDir, "08-Indexes", "memory-graph.json"));
+const selectedDashboard = readFileSync(join(brainDir, "11-Dashboards", "Memory Dashboard.md"), "utf8");
+assert.ok(selectedGraph.nodes.some((node) => node.id === `memory:${firstId}`));
+assert.ok(selectedGraph.nodes.filter((node) => node.kind === "memory").every((node) => node.status === "approved"));
+assert.ok(selectedGraph.nodes.filter((node) => node.kind === "memory").every((node) => !node.sourceRefs?.some((source) => source.sourceFile.includes("/"))));
+assert.match(selectedDashboard, /concise direct answers/);
+assert.doesNotMatch(selectedDashboard, /follow up with RBC/);
+assert.doesNotMatch(selectedDashboard, new RegExp(secondId));
+
 runJson(["import", "--brain-dir", brainDir, "--imports-dir", importsDir, "--embedding-provider", "hash", "--json"]);
 const afterReimport = runJson(["review", "--brain-dir", brainDir, "--json"]);
 assert.equal(afterReimport.items.find((item) => item.id === firstId)?.status, "approved");
@@ -283,6 +302,24 @@ writeJsonlFile(memoryIndexPath, [
     entities: []
   }
 ]);
+const map = runJson(["map", "--brain-dir", brainDir, "--json"]);
+assert.equal(map.scope, "approved-memory-only");
+assert.ok(existsSync(map.graphPath));
+assert.ok(existsSync(map.relatedPath));
+assert.ok(existsSync(join(map.dashboardsDir, "Memory Dashboard.md")));
+const graph = readJson(map.graphPath);
+const relatedIndex = readJson(map.relatedPath);
+const dashboard = readFileSync(join(map.dashboardsDir, "Memory Dashboard.md"), "utf8");
+assert.ok(graph.nodes.some((node) => node.kind === "memory"));
+assert.ok(graph.nodes.some((node) => node.kind === "type"));
+assert.ok(graph.edges.some((edge) => edge.kind === "related" && Array.isArray(edge.reasons) && edge.reasons.length > 0));
+assert.equal(relatedIndex.scope, "approved-memory-only");
+assert.ok(relatedIndex.related.some((item) => item.related.length > 0));
+const related = runJson(["related", "--brain-dir", brainDir, "--id", firstId, "--json"]);
+assert.equal(related.id, firstId);
+assert.ok(related.related.every((item) => typeof item.score === "number" && item.reasons.length > 0));
+assert.match(dashboard, /Computed Related Memory Suggestions/);
+assert.doesNotMatch(dashboard, /private\/tmp|fixture-tests/);
 const recencySearch = runJson(["search", "recency ranking sentinel durable review", "--brain-dir", brainDir, "--type", "preference", "--status", "approved", "--source-backed", "--json"]);
 assert.equal(recencySearch[0].id, "recency-new");
 assert.ok(recencySearch[0].recencyScore > recencySearch.find((result) => result.id === "recency-old").recencyScore);
@@ -301,6 +338,8 @@ assert.ok(afterOutdatedSearch.some((result) => result.status === "outdated"));
 const doctor = runJson(["doctor", "--brain-dir", brainDir, "--json"]);
 assert.equal(doctor.find((check) => check.name === "Memory review")?.status, "pass");
 assert.equal(doctor.find((check) => check.name === "Company task runtime")?.status, "pass");
+assert.equal(doctor.find((check) => check.name === "Memory graph")?.status, "pass");
+assert.equal(doctor.find((check) => check.name === "Obsidian dashboards")?.status, "pass");
 
 const fakeHome = join(fixtureRoot, "home");
 mkdirSync(join(fakeHome, ".codex"), { recursive: true });
@@ -343,7 +382,7 @@ assert.ok(readdirSync(backupRoot).length >= 1);
 function runJson(args, env = {}) {
   const output = execFileSync(process.execPath, [cli, ...args], {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: { ...process.env, HOME: testHome, ...env },
     encoding: "utf8"
   });
   return JSON.parse(output);
@@ -353,7 +392,7 @@ function runFailure(args, env = {}) {
   try {
     execFileSync(process.execPath, [cli, ...args], {
       cwd: root,
-      env: { ...process.env, ...env },
+      env: { ...process.env, HOME: testHome, ...env },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -365,6 +404,10 @@ function runFailure(args, env = {}) {
 
 function readJsonl(path) {
   return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(path, "utf8"));
 }
 
 function writeJsonlFile(path, records) {
